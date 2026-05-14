@@ -1,0 +1,43 @@
+version: "3.9"
+
+# Production compose – Cloudflare tunnel tự động hoàn toàn từ .env
+# Chỉ cần: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+
+  nginx:
+    ports: !reset []    # tắt expose port trực tiếp, chỉ qua tunnel
+
+  # ── Init service: gọi CF API, ghi config vào volume cf_runtime, rồi thoát ──
+  cf-setup:
+    build:
+      context: ./cloudflare
+      dockerfile: Dockerfile.setup
+    container_name: autocategory_cf_setup
+    restart: "no"       # chạy 1 lần, exit 0 là xong
+    env_file: .env
+    environment:
+      - CF_API_TOKEN
+      - CF_ACCOUNT_ID
+      - CF_SUBDOMAIN
+      - CF_DOMAIN
+      - CF_TUNNEL_NAME
+    volumes:
+      - cf_runtime:/cf-runtime
+
+  # ── cloudflared đọc config từ shared volume cf_runtime ─────────────────────
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: autocategory_cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --config /cf-runtime/config.yml run
+    volumes:
+      - cf_runtime:/cf-runtime:ro
+    depends_on:
+      cf-setup:
+        condition: service_completed_successfully
+      nginx:
+        condition: service_started
+
+volumes:
+  cf_runtime:

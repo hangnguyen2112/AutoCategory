@@ -1,0 +1,201 @@
+version: "3.9"
+
+services:
+
+  llama-server:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: autocategory_llama
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - llama_models:/models
+    ports:
+      - "8080:8080"
+    command: >
+      --model /models/google-gemma-4-E4B-it-Q4_K_M.gguf
+      --mmproj /models/mmproj-BF16.gguf
+      --host 0.0.0.0
+      --port 8080
+      --ctx-size 8192
+      --n-predict 512
+      --n-gpu-layers 99
+      --log-disable
+      --flash-attn on
+      --jinja
+      --reasoning off
+      --chat-template-kwargs '{"enable_thinking":false}'
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'true < /dev/tcp/localhost/8080' 2>/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: autocategory_qdrant
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'true < /dev/tcp/localhost/6333' 2>/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: autocategory_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: autocategory
+      POSTGRES_USER: ${POSTGRES_USER:-autocategory}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+      PGTZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autocategory"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: autocategory_redis
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: autocategory_api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+      OMNI_BASE_URL: ${OMNI_BASE_URL:-}
+      OMNI_SYNC_MODE: ${OMNI_SYNC_MODE:-manual}
+      OMNI_SYNC_INTERVAL_HOURS: ${OMNI_SYNC_INTERVAL_HOURS:-24}
+      CATEGORY_ATTRIBUTES_JSON_PATH: /app/data/category_attributes.json
+    volumes:
+      - ./api/data:/app/data
+      - ./api/logs:/app/logs
+      - ./api/migrations:/app/migrations:ro
+      - ./api/services/omni_sync_service.py:/app/services/omni_sync_service.py:ro
+      - ./api/services/llm_service.py:/app/services/llm_service.py:ro
+      - ./api/middleware/rate_limit.py:/app/middleware/rate_limit.py:ro
+      - ./api/routers/admin_categories.py:/app/routers/admin_categories.py:ro
+      - ./api/routers/category.py:/app/routers/category.py:ro
+      - ./api/routers/generate.py:/app/routers/generate.py:ro
+      - ./api/models/__init__.py:/app/models/__init__.py:ro
+    depends_on:
+      llama-server:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+  admin-dashboard:
+    build:
+      context: ./admin-dashboard
+      dockerfile: Dockerfile
+    container_name: autocategory_admin
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # Cloudflare Tunnel setup (run once, then stop)
+  cf-setup:
+    build:
+      context: ./cloudflare
+      dockerfile: Dockerfile.setup
+    container_name: autocategory_cf_setup
+    env_file: .env
+    volumes:
+      - cf_runtime:/etc/cloudflared
+    restart: "no"
+    profiles:
+      - setup
+
+  # Cloudflare Tunnel daemon
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: autocategory_tunnel
+    restart: unless-stopped
+    command: tunnel run
+    volumes:
+      - cf_runtime:/etc/cloudflared:ro
+    environment:
+      - TUNNEL_TOKEN_FILE=/etc/cloudflared/token
+      - TZ=${TZ:-Asia/Ho_Chi_Minh}
+    depends_on:
+      nginx:
+        condition: service_started
+    profiles:
+      - tunnel
+
+  nginx:
+    image: nginx:alpine
+    container_name: autocategory_nginx
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    ports:
+      - "3001:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend:/usr/share/nginx/html:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      admin-dashboard:
+        condition: service_started
+
+volumes:
+  llama_models:
+  qdrant_data:
+  postgres_data:
+  redis_data:
+  cf_runtime:

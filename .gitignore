@@ -1,0 +1,172 @@
+# =============================================================================
+# AutoCategory - .gitignore
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Python / FastAPI
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+env/
+venv/
+.venv/
+ENV/
+.env
+.env.*
+!.env.example
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+
+# mypy / ruff / pyright
+.mypy_cache/
+.ruff_cache/
+pyrightconfig.json
+
+# -----------------------------------------------------------------------------
+# Node.js / React / Vite
+# -----------------------------------------------------------------------------
+node_modules/
+autocategory/admin-dashboard/dist/
+autocategory/admin-dashboard/.vite/
+.npm
+*.tsbuildinfo
+
+# Playwright test results
+test-results/
+playwright-report/
+
+# -----------------------------------------------------------------------------
+# Docker
+# -----------------------------------------------------------------------------
+# Không ignore docker-compose files (cần cho deploy)
+# Chỉ ignore file override local
+docker-compose.override.yml
+docker-compose.local.yml
+
+# -----------------------------------------------------------------------------
+# Secrets & Credentials
+# -----------------------------------------------------------------------------
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+*.cert
+*.crt
+# JWT secret, API keys...
+secret.txt
+.secrets
+
+# -----------------------------------------------------------------------------
+# Database & Data
+# -----------------------------------------------------------------------------
+# PostgreSQL data volume
+postgres_data/
+pgdata/
+
+# Qdrant data volume
+qdrant_storage/
+qdrant_data/
+
+# SQLite (nếu dùng local)
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup files
+*.bak
+*.dump
+*.sql.gz
+
+# Data files lớn (model weights, embeddings...)
+*.bin
+*.safetensors
+*.gguf
+*.ggml
+*.pt
+*.pth
+*.pkl
+*.h5
+
+# -----------------------------------------------------------------------------
+# Logs
+# -----------------------------------------------------------------------------
+logs/
+*.log
+autocategory/api/logs/
+autocategory/api/data/logs/
+api_logs.txt
+
+# -----------------------------------------------------------------------------
+# OS & Editor
+# -----------------------------------------------------------------------------
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+# VS Code
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# JetBrains
+.idea/
+*.iml
+
+# Vim
+*.swp
+*.swo
+
+# -----------------------------------------------------------------------------
+# Test & CI artifacts
+# -----------------------------------------------------------------------------
+test_results_*.csv
+*.test.log
+junit.xml
+
+# -----------------------------------------------------------------------------
+# Monitoring (data volumes)
+# -----------------------------------------------------------------------------
+grafana_data/
+prometheus_data/
+alertmanager_data/
+
+# -----------------------------------------------------------------------------
+# Cloudflare / Tunnel
+# -----------------------------------------------------------------------------
+cloudflare/cert.pem
+cloudflare/.credentials.json
+.cloudflared/
+
+# -----------------------------------------------------------------------------
+# Misc
+# -----------------------------------------------------------------------------
+*.tmp
+*.temp
+*.cache
+.cache/

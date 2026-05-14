@@ -1,0 +1,70 @@
+# Production Dockerfile for AutoCategory API
+
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04 as builder
+
+# Install Python 3.12 and build dependencies
+RUN apt-get update && apt-get install -y \
+    python3.12 python3.12-dev python3-pip \
+    gcc g++ postgresql-client \
+    && ln -sf python3.12 /usr/bin/python3 \
+    && ln -sf python3 /usr/bin/python \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    --extra-index-url https://download.pytorch.org/whl/cu121
+
+# Production stage
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+# Install Python 3.12 and runtime dependencies
+RUN apt-get update && apt-get install -y \
+    python3.12 python3-pip \
+    libpq5 curl \
+    && ln -sf python3.12 /usr/bin/python3 \
+    && ln -sf python3 /usr/bin/python \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Create non-root user
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+# Set working directory
+WORKDIR /app
+
+# Copy application code
+COPY --chown=appuser:appuser . /app/
+
+# Create necessary directories
+RUN mkdir -p /app/data /app/logs && \
+    chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Expose port
+EXPOSE 8000
+
+# Run with gunicorn (production ASGI server)
+CMD ["gunicorn", "main:app", \
+     "--workers", "4", \
+     "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--bind", "0.0.0.0:8000", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-", \
+     "--log-level", "info", \
+     "--timeout", "120", \
+     "--graceful-timeout", "30", \
+     "--keep-alive", "5"]

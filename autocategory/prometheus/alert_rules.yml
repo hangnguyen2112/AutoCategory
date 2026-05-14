@@ -1,0 +1,133 @@
+# Prometheus Alert Rules for AutoCategory
+
+groups:
+  - name: autocategory_api_alerts
+    interval: 30s
+    rules:
+      # High error rate alert
+      - alert: HighErrorRate
+        expr: |
+          (
+            rate(http_requests_total{status=~"5.."}[5m])
+            / rate(http_requests_total[5m])
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+      
+      # Slow response time alert
+      - alert: SlowResponseTime
+        expr: |
+          histogram_quantile(0.95, 
+            rate(http_request_duration_seconds_bucket[5m])
+          ) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API response time is slow"
+          description: "95th percentile response time is {{ $value }}s (threshold: 3s)"
+      
+      # Low classification confidence
+      - alert: LowClassificationConfidence
+        expr: |
+          avg(classification_confidence) < 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Classification confidence is low"
+          description: "Average confidence is {{ $value | humanize }} (threshold: 0.5)"
+      
+      # Service down alert
+      - alert: ServiceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} has been down for more than 2 minutes"
+      
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: |
+          (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Available memory is {{ $value | humanizePercentage }} (threshold: 10%)"
+      
+      # High disk usage
+      - alert: HighDiskUsage
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High disk usage"
+          description: "Available disk space is {{ $value | humanizePercentage }} (threshold: 10%)"
+      
+      # Database connection pool exhaustion
+      - alert: DatabaseConnectionPoolNearLimit
+        expr: |
+          (pg_stat_activity_count / pg_settings_max_connections) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database connection pool near limit"
+          description: "{{ $value | humanizePercentage }} of connections are in use (threshold: 80%)"
+      
+      # Redis memory usage
+      - alert: RedisHighMemory
+        expr: |
+          (redis_memory_used_bytes / redis_memory_max_bytes) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage is high"
+          description: "Redis is using {{ $value | humanizePercentage }} of max memory (threshold: 90%)"
+      
+      # Classification request spike
+      - alert: ClassificationRequestSpike
+        expr: |
+          rate(http_requests_total{endpoint="/api/classify"}[5m])
+          > 2 * avg_over_time(rate(http_requests_total{endpoint="/api/classify"}[5m])[1h:5m])
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "Classification request spike detected"
+          description: "Request rate is {{ $value }} req/s (2x normal)"
+
+  - name: training_pipeline_alerts
+    interval: 60s
+    rules:
+      # Training job failed
+      - alert: TrainingJobFailed
+        expr: training_job_status{status="failed"} == 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Training job failed"
+          description: "Training job {{ $labels.job_id }} failed"
+      
+      # Model accuracy dropped
+      - alert: ModelAccuracyDrop
+        expr: |
+          model_accuracy < 0.7
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Model accuracy dropped below threshold"
+          description: "Current accuracy is {{ $value | humanize }} (threshold: 0.7)"

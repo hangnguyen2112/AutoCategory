@@ -1,0 +1,26 @@
+[
+  {
+    "title": "iPhone 15 Pro Max 256GB",
+    "description": "Điện thoại iPhone 15 Pro Max mới nguyên seal chính hãng VN/A",
+    "price": 25990000,
+    "actual_category_id": 1234
+  },
+  {
+    "title": "Áo thun nam cotton",
+    "description": "Áo thun nam form rộng chất cotton 100% thoáng mát",
+    "price": 199000,
+    "actual_category_id": 5678
+  },
+  {
+    "title": "Bàn làm việc gỗ công nghiệp",
+    "description": "Bàn làm việc hiện đại kích thước 120x60cm màu nâu",
+    "price": 1500000,
+    "actual_category_id": 9012
+  },
+  {
+    "title": "Xe đạp thể thao Giant",
+    "description": "Xe đạp thể thao Giant ATX 26 inch mới 100%",
+    "price": 6500000,
+    "actual_category_id": 3456
+  }
+]

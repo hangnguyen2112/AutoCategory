@@ -1,0 +1,14 @@
+[
+    {
+        "category_id":  1000,
+        "parent_id":  null,
+        "description":  "Test",
+        "name":  "Test Category"
+    },
+    {
+        "category_id":  1001,
+        "parent_id":  1000,
+        "description":  "Test child",
+        "name":  "Test Child"
+    }
+]

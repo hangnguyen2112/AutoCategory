@@ -1,0 +1,1663 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AutoCategory – Test Workflow</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #22263a;
+    --border: #2e3250;
+    --accent: #6c63ff;
+    --accent2: #00cfb4;
+    --text: #e2e8f0;
+    --muted: #8892b0;
+    --green: #22c55e;
+    --yellow: #f59e0b;
+    --red: #ef4444;
+    --blue: #3b82f6;
+    --orange: #f97316;
+    --purple: #a855f7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    padding: 24px 16px;
+  }
+  h1 { font-size: 1.5rem; font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: .875rem; margin-bottom: 24px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 14px; color: var(--accent2); }
+  label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: 4px; margin-top: 12px; }
+  input, textarea {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 8px 12px;
+    font-size: .9rem;
+    outline: none;
+    resize: vertical;
+  }
+  input:focus, textarea:focus { border-color: var(--accent); }
+  textarea { min-height: 80px; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 24px;
+    font-size: .95rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 16px;
+    transition: opacity .2s;
+  }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn:hover:not(:disabled) { opacity: .88; }
+  .btn-sm {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: .78rem;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  .btn-sm:hover { color: var(--text); }
+
+  .pipeline { display: none; margin-top: 8px; margin-bottom: 16px; }
+  .pipeline.visible { display: block; }
+
+  .step {
+    position: relative;
+    border-left: 2px solid var(--border);
+    margin-left: 16px;
+    padding: 0 0 24px 24px;
+  }
+  .step:last-child { padding-bottom: 0; border-left-color: transparent; }
+  .step-dot {
+    position: absolute;
+    left: -9px;
+    top: 2px;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--surface2);
+    border: 2px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: .6rem; font-weight: 700;
+  }
+  .step-dot.done { background: var(--green); border-color: var(--green); }
+  .step-dot.active { background: var(--accent); border-color: var(--accent); animation: pulse 1s infinite; }
+  .step-dot.error { background: var(--red); border-color: var(--red); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  .step-title {
+    font-size: .85rem;
+    font-weight: 600;
+    color: var(--muted);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .step-title.done { color: var(--green); }
+  .step-title.active { color: var(--accent); }
+  .step-title.error { color: var(--red); }
+
+  .step-body { 
+    font-size: .875rem;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+
+  .kv-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    font-size: .82rem;
+  }
+  .kv-key { color: var(--muted); white-space: nowrap; }
+  .kv-val { 
+    color: var(--text); 
+    word-wrap: break-word; 
+    overflow-wrap: break-word;
+    word-break: normal;
+  }
+
+  .tag {
+    display: inline-block;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: .75rem;
+    font-weight: 600;
+  }
+  .tag-auto   { background: #16503020; color: var(--green); border: 1px solid var(--green); }
+  .tag-pre    { background: #3b82f620; color: var(--blue); border: 1px solid var(--blue); }
+  .tag-sug    { background: #f59e0b20; color: var(--yellow); border: 1px solid var(--yellow); }
+  .tag-man    { background: #ef444420; color: var(--red); border: 1px solid var(--red); }
+
+  .candidate-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+  .candidate {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: .82rem;
+  }
+  .candidate.selected { border-color: var(--accent); background: #6c63ff18; }
+  .c-rank { color: var(--muted); font-weight: 700; width: 20px; text-align: center; flex-shrink: 0; }
+  .c-info { flex: 1; min-width: 0; }
+  .c-name { font-weight: 600; }
+  .c-path { color: var(--muted); font-size: .75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .c-score {
+    font-size: .75rem;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 5px;
+    background: var(--surface);
+    color: var(--accent2);
+    flex-shrink: 0;
+  }
+
+  pre.code {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: .8rem;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--accent2);
+    line-height: 1.6;
+  }
+
+  .result-box {
+    background: var(--surface2);
+    border: 2px solid var(--accent);
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 8px;
+  }
+  .result-name { font-size: 1.1rem; font-weight: 700; color: var(--accent2); }
+  .result-path { color: var(--muted); font-size: .82rem; margin-top: 4px; }
+  .result-desc { color: var(--text); font-size: .85rem; margin-top: 8px; line-height: 1.5; }
+
+  .spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid #ffffff40;
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin .6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .error-msg {
+    color: var(--red);
+    background: #ef444412;
+    border: 1px solid var(--red);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: .85rem;
+  }
+
+  .samples { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+
+  .mode-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+    padding: 10px 14px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .toggle-wrap { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .toggle-wrap input[type=checkbox] { display: none; }
+  .toggle-track {
+    width: 38px; height: 20px;
+    background: var(--border);
+    border-radius: 10px;
+    position: relative;
+    transition: background .2s;
+    flex-shrink: 0;
+  }
+  .toggle-track::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 16px; height: 16px;
+    background: #fff;
+    border-radius: 50%;
+    transition: left .2s;
+  }
+  input[type=checkbox]:checked + .toggle-track { background: var(--orange); }
+  input[type=checkbox]:checked + .toggle-track::after { left: 20px; }
+  .toggle-label { font-size: .85rem; color: var(--text); }
+  .toggle-hint { font-size: .75rem; color: var(--muted); }
+
+  .img-section { margin-top: 12px; }
+  .img-tabs {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    width: fit-content;
+    margin-bottom: 10px;
+  }
+  .img-tab {
+    background: var(--surface2);
+    color: var(--muted);
+    border: none;
+    padding: 5px 14px;
+    font-size: .8rem;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .img-tab.active { background: var(--accent); color: #fff; }
+
+  .drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+    color: var(--muted);
+    font-size: .85rem;
+    position: relative;
+  }
+  .drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); background: #6c63ff0d; color: var(--text); }
+  .drop-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .drop-icon { font-size: 1.6rem; margin-bottom: 4px; }
+
+  .img-previews {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .img-thumb {
+    position: relative;
+    width: 72px; height: 72px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .img-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .img-thumb-del {
+    position: absolute;
+    top: 2px; right: 2px;
+    background: #00000099;
+    border: none;
+    color: #fff;
+    border-radius: 50%;
+    width: 18px; height: 18px;
+    font-size: .7rem;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    line-height: 1;
+  }
+  .img-thumb-del:hover { background: var(--red); }
+
+  .suggest-box {
+    display: none;
+    margin-top: 14px;
+    background: #00cfb410;
+    border: 1px solid #00cfb460;
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .suggest-box.visible { display: block; }
+  .suggest-label {
+    font-size: .75rem;
+    font-weight: 700;
+    color: var(--accent2);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .suggest-text {
+    font-size: .88rem;
+    color: var(--text);
+    line-height: 1.5;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 11px;
+    margin-bottom: 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .suggest-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn-apply {
+    background: var(--accent2);
+    color: #0f1117;
+    border: none;
+    border-radius: 7px;
+    padding: 7px 14px;
+    font-size: .82rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: opacity .2s;
+  }
+  .btn-apply:hover { opacity: .85; }
+  .btn-apply-only {
+    background: var(--surface2);
+    border: 1px solid var(--accent2);
+    color: var(--accent2);
+    border-radius: 7px;
+    padding: 6px 14px;
+    font-size: .82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .2s;
+  }
+  .btn-apply-only:hover {
+    background: var(--accent2);
+    color: #0f1117;
+  }
+  .btn-dismiss {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 7px;
+    padding: 6px 12px;
+    font-size: .82rem;
+    cursor: pointer;
+  }
+  .btn-dismiss:hover { color: var(--text); }
+
+  .badge-skip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #f9731620;
+    border: 1px solid var(--orange);
+    color: var(--orange);
+    border-radius: 6px;
+    padding: 2px 9px;
+    font-size: .75rem;
+    font-weight: 600;
+  }
+
+  .tree-container {
+    max-height: 500px;
+    overflow-y: auto;
+    margin-top: 8px;
+    padding: 12px 16px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .tree-node {
+    margin-left: 20px;
+    font-size: .85rem;
+    line-height: 1.9;
+  }
+  .tree-node.root { margin-left: 0; }
+  .tree-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 6px;
+    border-radius: 5px;
+    cursor: pointer;
+    color: var(--text);
+    transition: background .15s;
+  }
+  .tree-label:hover { background: var(--surface); }
+  .tree-label.selected {
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+  }
+  .tree-label.path {
+    background: #6c63ff20;
+    color: var(--accent2);
+  }
+  .tree-toggle {
+    width: 14px;
+    height: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: .7rem;
+    color: var(--muted);
+    user-select: none;
+  }
+  .tree-children { display: none; }
+  .tree-children.expanded { display: block; }
+
+  #tree-card {
+    margin-top: 24px;
+  }
+
+  /* Responsive Design */
+  @media (max-width: 640px) {
+    body { padding: 16px 12px; }
+    h1 { font-size: 1.3rem; }
+    .card { padding: 16px; }
+    .card h2 { font-size: .95rem; }
+    .btn { font-size: .88rem; padding: 9px 18px; }
+    .suggest-box { padding: 10px 12px; }
+    .suggest-label { font-size: .7rem; }
+    .suggest-text { font-size: .82rem; padding: 7px 9px; }
+    .btn-apply, .btn-apply-only, .btn-dismiss {
+      font-size: .78rem;
+      padding: 6px 12px;
+    }
+    .tree-container { padding: 10px 12px; max-height: 400px; }
+    .tree-node { margin-left: 14px; font-size: .8rem; line-height: 1.7; }
+    .kv-grid { font-size: .78rem; gap: 3px 10px; }
+    .candidate { padding: 8px 10px; }
+    .cat-score { font-size: .72rem; }
+  }
+  
+  @media (min-width: 700px) {
+    body { max-width: 760px; margin: 0 auto; }
+  }
+
+  /* ── Action buttons row ── */
+  .action-row { margin-top:16px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  .action-sep { width:1px; height:32px; background:var(--border); flex-shrink:0; }
+  .action-sep-label { font-size:.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; white-space:nowrap; }
+  .btn-green  { background: #16a34a; }
+  .btn-blue   { background: var(--blue); }
+  .btn-purple { background: var(--purple); }
+  .btn-teal   { background: #0d9488; }
+  .btn-gray   { background: var(--surface2); border:1px solid var(--border); color:var(--muted); }
+
+  /* ── Generate result card ── */
+  .gen-section { display:none; margin-top:4px; }
+  .gen-section.visible { display:block; }
+  .gen-title-row { display:flex; align-items:center; gap:8px; margin-bottom:14px; }
+  .gen-mode-badge { font-size:.72rem; font-weight:700; border-radius:5px; padding:2px 8px; text-transform:uppercase; }
+  .gen-mode-img  { background:#6c63ff20; color:var(--accent); border:1px solid var(--accent); }
+  .gen-mode-text { background:#22c55e20; color:var(--green);  border:1px solid var(--green); }
+  .gen-mode-full { background:#a855f720; color:var(--purple); border:1px solid var(--purple); }
+  .gen-output-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px; }
+  @media(max-width:640px) { .gen-output-row { grid-template-columns:1fr; } }
+  .gen-field { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:10px; }
+  .gen-field-label { font-size:.72rem; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; margin-bottom:5px; }
+  .gen-field-value { font-size:.88rem; color:var(--text); line-height:1.5; word-break:break-word; }
+  .gen-cat-card { background:#00cfb412; border:1px solid #00cfb450; border-radius:10px; padding:12px; margin-bottom:12px; }
+  .gen-cat-header { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .gen-cat-name { font-size:.95rem; font-weight:700; color:var(--accent2); }
+  .gen-cat-path { font-size:.78rem; color:var(--muted); }
+  .gen-cat-conf { margin-left:auto; font-size:.8rem; font-weight:700; color:var(--accent2); }
+  .gen-attrs-detected { margin-top:10px; display:flex; flex-wrap:wrap; gap:6px; }
+  .gen-attr-chip { background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:2px 8px; font-size:.75rem; color:var(--text); }
+  .gen-attr-chip strong { color:var(--accent2); }
+
+  /* ── Fields form ── */
+  .fields-section { display:none; }
+  .fields-section.visible { display:block; }
+  .fields-header { display:flex; align-items:center; gap:10px; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  .fields-cat-badge { background:#6c63ff20; border:1px solid var(--accent); color:var(--accent); border-radius:8px; padding:3px 10px; font-size:.78rem; font-weight:600; }
+  .fields-sync-hint { font-size:.72rem; color:var(--muted); background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:3px 8px; }
+  .field-group { margin-bottom:14px; }
+  .field-group.conditional-hidden { display:none; }
+  .field-label-row { display:flex; align-items:center; gap:6px; margin-bottom:5px; }
+  .field-lbl { font-size:.82rem; color:var(--text); font-weight:500; }
+  .field-req { color:var(--red); font-size:.75rem; }
+  .field-featured-dot { width:6px; height:6px; border-radius:50%; background:var(--accent2); flex-shrink:0; }
+  .field-cond-badge { font-size:.68rem; background:#f59e0b20; border:1px solid var(--yellow); color:var(--yellow); border-radius:4px; padding:1px 5px; flex-shrink:0; }
+  .field-select, .field-input { width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:8px; color:var(--text); padding:8px 12px; font-size:.88rem; outline:none; }
+  .field-select:focus, .field-input:focus { border-color:var(--accent); }
+  .field-select option { background:var(--surface2); }
+  .radio-group { display:flex; flex-wrap:wrap; gap:8px; margin-top:4px; }
+  .radio-option { display:flex; align-items:center; gap:5px; cursor:pointer; background:var(--surface2); border:1px solid var(--border); border-radius:7px; padding:5px 11px; font-size:.82rem; color:var(--muted); transition:all .15s; user-select:none; }
+  .radio-option input { display:none; }
+  .radio-option.checked { background:#6c63ff20; border-color:var(--accent); color:var(--text); font-weight:600; }
+  .radio-option:hover  { border-color:var(--accent); color:var(--text); }
+  .fields-section { padding: 20px 24px 24px; }
+  .fields-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:18px; padding-top:16px; border-top:1px solid var(--border); }
+  .fields-json-out { margin-top:12px; display:none; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:12px; font-size:.78rem; color:var(--accent2); white-space:pre-wrap; word-break:break-all; line-height:1.6; max-height:300px; overflow-y:auto; }
+  .fields-json-out.visible { display:block; }
+  .fields-progress { display:none; align-items:center; gap:10px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:.82rem; color:var(--muted); }
+  .fields-progress.visible { display:flex; }
+  .fields-progress-spinner { width:16px; height:16px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; flex-shrink:0; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .sync-needed-msg { color:var(--yellow); background:#f59e0b15; border:1px solid #f59e0b60; border-radius:8px; padding:12px; font-size:.83rem; line-height:1.6; }
+</style>
+</head>
+<body>
+
+<h1>🧠 AutoCategory</h1>
+<p class="subtitle">Phân loại danh mục · AI Generate nội dung · Điền thuộc tính đăng tin</p>
+
+<div class="card">
+  <h2>📝 Thông tin sản phẩm</h2>
+
+  <div class="samples">
+    <button class="btn-sm" onclick="fillSample(0)">iPhone 13</button>
+    <button class="btn-sm" onclick="fillSample(1)">Laptop gaming</button>
+    <button class="btn-sm" onclick="fillSample(2)">Xe SH</button>
+    <button class="btn-sm" onclick="fillSample(3)">Phòng trọ</button>
+    <button class="btn-sm" onclick="fillSample(4)">Mèo Anh</button>
+    <button class="btn-sm" onclick="fillSample(5)">Tuyển nhân viên</button>
+    <button class="btn-sm" onclick="fillSample(6)">Cho tặng bàn</button>
+    <button class="btn-sm" onclick="fillSample(7)">Toyota Vios</button>
+    <button class="btn-sm" onclick="fillSample(8)">Nike AF1</button>
+    <button class="btn-sm" onclick="fillSample(9)">iPad Pro M2</button>
+    <button class="btn-sm" onclick="fillSample(10)">Áo thun</button>
+    <button class="btn-sm" onclick="fillSample(11)">Nhà Q1</button>
+    <button class="btn-sm" onclick="fillSample(12)">Tìm việc</button>
+    <button class="btn-sm" onclick="fillSample(13)">Loa JBL</button>
+    <button class="btn-sm" onclick="fillSample(14)">Balo TNF</button>
+    <button class="btn-sm" onclick="fillSample(15)">Corgi</button>
+    <button class="btn-sm" onclick="fillSample(16)">Dior Sauvage</button>
+    <button class="btn-sm" onclick="fillSample(17)">Xe đạp</button>
+    <button class="btn-sm" onclick="fillSample(18)">PS5</button>
+    <button class="btn-sm" onclick="fillSample(19)">MacBook M2</button>
+  </div>
+
+  <label>Tiêu đề *</label>
+  <input id="inp-title" type="text" placeholder="VD: Pass ip13 prm 256g fullbox, pin 88" />
+
+  <label>Mô tả</label>
+  <textarea id="inp-desc" placeholder="VD: máy zin, còn bảo hành, mua 2023"></textarea>
+
+  <label>Giá (VNĐ)</label>
+  <input id="inp-price" type="number" min="0" placeholder="VD: 12500000" />
+
+  <label>🔑 API Key <span style="color:var(--muted);font-weight:400;font-size:.73rem">(chỉ cần cho Phân loại)</span></label>
+  <input id="inp-api-key" type="text" placeholder="sk_live_..." />
+  <div style="font-size:.75rem;color:var(--muted);margin-top:3px">Lưu tự động vào browser storage</div>
+
+  <label>Ảnh sản phẩm</label>
+  <div class="img-section">
+    <div class="img-tabs">
+      <button class="img-tab active" id="tab-upload" onclick="switchTab('upload')">⬆ Upload file</button>
+      <button class="img-tab" id="tab-url" onclick="switchTab('url')">🔗 Paste URL</button>
+    </div>
+
+    <div id="pane-upload">
+      <div class="drop-zone" id="drop-zone"
+           ondragover="handleDragOver(event)"
+           ondragleave="handleDragLeave(event)"
+           ondrop="handleDrop(event)">
+        <input type="file" id="inp-file" accept="image/*" multiple onchange="handleFiles(this.files)" />
+        <div class="drop-icon">🖼️</div>
+        <div>Kéo thả ảnh vào đây hoặc <strong>click để chọn</strong></div>
+        <div style="font-size:.75rem;margin-top:4px;color:var(--muted)">Tối đa 5 ảnh · JPG, PNG, WebP · tự động resize 800px & nén JPEG 85%</div>
+      </div>
+      <div class="img-previews" id="img-previews"></div>
+    </div>
+
+    <div id="pane-url" style="display:none">
+      <input id="inp-images" type="text" placeholder="https://... (cách nhau bởi dấu phẩy)" />
+    </div>
+  </div>
+
+  <div class="mode-row">
+    <label class="toggle-wrap" for="chk-fast" style="margin:0">
+      <input type="checkbox" id="chk-fast" />
+      <span class="toggle-track"></span>
+      <span class="toggle-label">⚡ Fast mode</span>
+    </label>
+    <span class="toggle-hint">Bỏ qua LLM understand → nhanh hơn ~1–2s, độ chính xác thấp hơn</span>
+  </div>
+
+  <div class="mode-row">
+    <label class="toggle-wrap" for="chk-image" style="margin:0">
+      <input type="checkbox" id="chk-image" checked />
+      <span class="toggle-track"></span>
+      <span class="toggle-label">🖼️ Phân tích hình ảnh</span>
+    </label>
+    <span class="toggle-hint">Sử dụng vision model để phân tích sản phẩm từ ảnh (nếu có)</span>
+  </div>
+
+  <div class="suggest-box" id="suggest-box">
+    <div class="suggest-label">💡 LLM gợi ý tiêu đề</div>
+    <div class="suggest-text" id="suggest-title"></div>
+    <div class="suggest-label" style="margin-top:12px">📝 LLM gợi ý mô tả</div>
+    <div class="suggest-text" id="suggest-desc"></div>
+    <div class="suggest-actions">
+      <button class="btn-apply-only" onclick="applySuggestionOnly()">✏️ Chỉ dùng gợi ý</button>
+      <button class="btn-apply" onclick="applySuggestion()">✅ Dùng &amp; phân loại lại</button>
+      <button class="btn-dismiss" onclick="dismissSuggestion()">✖ Bỏ qua</button>
+    </div>
+  </div>
+
+  <div class="action-row">
+    <button class="btn" id="btn-classify" onclick="runClassify()">
+      <span id="btn-icon-classify">▶</span> Phân loại
+    </button>
+    <span class="action-sep"></span>
+    <span class="action-sep-label">AI Generate</span>
+    <button class="btn btn-green" id="btn-img" onclick="callGenerate('from-images')" title="AI đọc ảnh → sinh tiêu đề + danh mục + thuộc tính">
+      <span id="btn-icon-img">🖼️</span> Từ ảnh
+    </button>
+    <button class="btn btn-blue" id="btn-text" onclick="callGenerate('from-text')" title="Tiêu đề + mô tả → phân loại danh mục + thuộc tính">
+      <span id="btn-icon-text">📝</span> Từ text
+    </button>
+    <button class="btn btn-purple" id="btn-full" onclick="callGenerate('full')" title="Ảnh + tiêu đề + mô tả → phân tích đầy đủ">
+      <span id="btn-icon-full">✨</span> AI Đầy đủ
+    </button>
+  </div>
+</div>
+
+<div class="pipeline" id="pipeline">
+
+  <div class="step" id="step1">
+    <div class="step-dot" id="dot1">1</div>
+    <div class="step-title" id="title1">LLM Product Understanding</div>
+    <div class="step-body" id="body1"></div>
+  </div>
+
+  <div class="step" id="step2">
+    <div class="step-dot" id="dot2">2</div>
+    <div class="step-title" id="title2">Build Product Embedding Text</div>
+    <div class="step-body" id="body2"></div>
+  </div>
+
+  <div class="step" id="step3">
+    <div class="step-dot" id="dot3">3</div>
+    <div class="step-title" id="title3">Embed + Vector Search (Qdrant)</div>
+    <div class="step-body" id="body3"></div>
+  </div>
+
+  <div class="step" id="step5">
+    <div class="step-dot" id="dot5">4</div>
+    <div class="step-title" id="title5">LLM Rerank Top Candidates</div>
+    <div class="step-body" id="body5"></div>
+  </div>
+
+  <div class="step" id="step6">
+    <div class="step-dot" id="dot6">5</div>
+    <div class="step-title" id="title6">Apply Threshold → Decision</div>
+    <div class="step-body" id="body6"></div>
+  </div>
+
+  <div class="step" id="stepFinal">
+    <div class="step-dot" id="dotFinal">✓</div>
+    <div class="step-title" id="titleFinal">Kết quả cuối</div>
+    <div class="step-body" id="bodyFinal"></div>
+  </div>
+
+</div>
+
+<!-- ── AI Generate Result ─────────────────────────────────── -->
+<div class="card gen-section" id="gen-result">
+  <div class="gen-title-row">
+    <h2 style="margin-bottom:0">🤖 Kết quả AI Generate</h2>
+    <span class="gen-mode-badge" id="gen-mode-badge">–</span>
+    <button class="btn-sm" style="margin-left:auto" onclick="hideGenResult()">✕ Đóng</button>
+  </div>
+  <div id="gen-body"></div>
+</div>
+
+<!-- ── Fields Form ─────────────────────────────────────────── -->
+<div class="card fields-section" id="fields-card">
+  <div class="fields-header">
+    <h2 style="margin-bottom:0">📋 Thuộc tính đăng tin</h2>
+    <span class="fields-cat-badge" id="fields-cat-badge">–</span>
+    <span class="fields-sync-hint" id="fields-sync-hint" style="display:none">⚠ Chưa sync fields</span>
+  </div>
+  <div class="fields-progress" id="fields-progress">
+    <span class="fields-progress-spinner"></span>
+    <span id="fields-progress-text">AI đang phân tích thuộc tính...</span>
+  </div>
+  <div id="fields-form-body"></div>
+  <div class="fields-actions" id="fields-actions" style="display:none">
+    <button class="btn btn-primary" id="fields-ai-suggest-btn" onclick="onAiSuggestClick()">🤖 AI Gợi ý</button>
+    <button class="btn-sm" style="padding:6px 12px" onclick="clearFieldValues()">🗑️ Xóa giá trị</button>
+  </div>
+  <pre class="fields-json-out" id="fields-json-out"></pre>
+</div>
+
+<div class="card" id="tree-card" style="display:none">
+  <h2>🌳 Cây danh mục (Category Tree)</h2>
+  <div class="tree-container" id="tree-container"></div>
+</div>
+
+<script>
+const API = '/api';
+let uploadedDataUrls = [];
+let categoriesData = [];
+let categoryMap = {};
+let currentFields = [];
+let currentCategoryId = null;
+
+function switchTab(tab) {
+  document.getElementById('tab-upload').classList.toggle('active', tab === 'upload');
+  document.getElementById('tab-url').classList.toggle('active', tab === 'url');
+  document.getElementById('pane-upload').style.display = tab === 'upload' ? '' : 'none';
+  document.getElementById('pane-url').style.display = tab === 'url' ? '' : 'none';
+}
+
+function handleDragOver(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.add('drag-over');
+}
+function handleDragLeave(e) {
+  document.getElementById('drop-zone').classList.remove('drag-over');
+}
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('drag-over');
+  handleFiles(e.dataTransfer.files);
+}
+
+function handleFiles(files) {
+  const remaining = 5 - uploadedDataUrls.length;
+  const toProcess = Array.from(files).slice(0, remaining);
+  for (const file of toProcess) {
+    if (!file.type.startsWith('image/')) continue;
+    if (file.size > 8 * 1024 * 1024) { alert(`Ảnh "${file.name}" vượt quá 8MB, bỏ qua.`); continue; }
+    resizeAndCompress(file).then((dataUrl) => {
+      uploadedDataUrls.push(dataUrl);
+      renderPreviews();
+    });
+  }
+  document.getElementById('inp-file').value = '';
+}
+
+function renderPreviews() {
+  const container = document.getElementById('img-previews');
+  container.innerHTML = uploadedDataUrls.map((url, i) => `
+    <div class="img-thumb">
+      <img src="${url}" alt="img${i}" />
+      <button class="img-thumb-del" onclick="removeImage(${i})" title="Xóa">✕</button>
+    </div>`).join('');
+}
+
+function removeImage(i) {
+  uploadedDataUrls.splice(i, 1);
+  renderPreviews();
+}
+
+const SAMPLES = [
+  { title: 'Pass ip13 prm 256g fullbox', desc: 'pin 88, máy zin, còn bh đến t6/2025, không kèm hộp', price: 12500000, images: '', expected: 2 },
+  { title: 'Bán laptop gaming Asus TUF F15 RTX 3060', desc: 'Ram 16GB, SSD 512, mới 99%, còn bảo hành Asus', price: 18000000, images: '', expected: 5 },
+  { title: 'Xe SH 150i ABS 2022 cần pass gấp', desc: 'xe chuẩn chỉnh, odo 8k, không đâm đụng, giá thương lượng', price: 68000000, images: '', expected: 24 },
+  { title: 'Cho thuê phòng trọ gần ĐH Bách Khoa HN, 18m2', desc: 'giờ tự do, có WC riêng, điện nước theo giá nhà nước', price: 3500000, images: '', expected: 42 },
+  { title: 'Bán mèo Anh lông ngắn 3 tháng tuổi', desc: 'đã tiêm phòng, tẩy giun, kèm giấy tờ, màu xám xanh', price: 4000000, images: '', expected: 51 },
+  { title: 'Tuyển nhân viên bán hàng online tại nhà', desc: 'thời gian linh hoạt, hoa hồng 15-20%, không cần kinh nghiệm', price: null, images: '', expected: 45 },
+  { title: 'Cho tặng bàn học cũ, tự đến lấy', desc: 'bàn còn dùng được, hơi xước, khu vực Cầu Giấy', price: 0, images: '', expected: 38 },
+  { title: 'Toyota Vios 2019 số tự động màu trắng', desc: 'xe gia đình đi kỹ, full option, không taxi, giá fix cứng', price: 425000000, images: '', expected: 25 },
+  { title: 'Giày Nike Air Force 1 rep 1:1 full box', desc: 'size 42, mới 99%, đi 2 lần, không lỗi', price: 350000, images: '', expected: 28 },
+  { title: 'iPad Pro M2 11 inch 128GB WiFi gray', desc: 'like new, còn bảo hành Apple đến 2025, kèm bao da', price: 18500000, images: '', expected: 3 },
+  { title: 'Áo thun nam cotton 100% form rộng unisex', desc: 'vải mềm mịn, thoáng mát, nhiều màu, freesize 50-75kg', price: 120000, images: '', expected: 27 },
+  { title: 'Bán nhà 3 tầng mặt tiền đường Lê Lợi Q1', desc: '4x15m, sổ hồng chính chủ, vị trí đẹp, giá thương lượng', price: 12500000000, images: '', expected: 41 },
+  { title: 'Tìm việc làm thêm buổi tối khu vực HN', desc: 'nam 25t, có xe máy, chấp nhận mọi công việc, không quán bar', price: null, images: '', expected: 44 },
+  { title: 'Loa JBL Flip 6 chính hãng còn BH 10 tháng', desc: 'màu đỏ, zin nguyên seal, mới mua thừa cần bán lại', price: 2300000, images: '', expected: 90 },
+  { title: 'Balo laptop The North Face Borealis 28L', desc: 'hàng real, màu đen, chống nước, fit laptop 15.6 inch', price: 1800000, images: '', expected: 67 },
+  { title: 'Chó Corgi 4 tháng tuổi đực tiêm đủ 3 mũi', desc: 'thuần chủng, giấy VKA, bố mẹ nhập Thái, rất khỏe', price: 8500000, images: '', expected: 50 },
+  { title: 'Nước hoa Dior Sauvage EDT 100ml tester', desc: 'hàng xách tay Pháp, còn 85%, mùi thơm lâu, nam tính', price: 1650000, images: '', expected: 68 },
+  { title: 'Xe đạp địa hình Giant ATX 26 inch đỏ đen', desc: 'phanh đĩa, baga sau, zin 95%, dùng ít, giá tốt', price: 3200000, images: '', expected: 76 },
+  { title: 'PS5 slim digital mới seal 100% bảo hành SSVN', desc: 'full box nguyên seal chưa kích hoạt, ship toàn quốc', price: 12900000, images: '', expected: 4 },
+  { title: 'Macbook Air M2 2023 16GB 256GB Space Gray', desc: 'như mới, dán skin, dùng 6 tháng, còn AppleCare+', price: 25500000, images: '', expected: 5 },
+];
+
+function fillSample(i) {
+  const s = SAMPLES[i];
+  document.getElementById('inp-title').value = s.title;
+  document.getElementById('inp-desc').value = s.desc;
+  document.getElementById('inp-price').value = s.price ?? '';
+  document.getElementById('inp-images').value = s.images;
+  uploadedDataUrls = [];
+  renderPreviews();
+}
+
+function setStep(id, state) {
+  document.getElementById('dot' + id).className = 'step-dot ' + state;
+  document.getElementById('title' + id).className = 'step-title ' + state;
+}
+function setBody(id, html) {
+  document.getElementById('body' + id).innerHTML = html;
+}
+function confBar(v) {
+  const pct = Math.round(v * 100);
+  const color = v >= 0.75 ? 'var(--green)' : v >= 0.55 ? 'var(--yellow)' : 'var(--red)';
+  return `<div style="display:flex;align-items:center;gap:8px;margin-top:2px;">
+    <div style="flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+      <div style="width:${pct}%;height:100%;background:${color};transition:width .3s"></div>
+    </div>
+    <span style="font-size:.75rem;color:${color};font-weight:700;">${pct}%</span>
+  </div>`;
+}
+function decisionTag(d) {
+  const map = {
+    auto_assign:   ['tag-auto', '✅ Auto Assign'],
+    preselect:     ['tag-pre',  '🔵 Preselect'],
+    suggest_top3:  ['tag-sug',  '🟡 Suggest Top 3'],
+    manual_select: ['tag-man',  '🔴 Manual Select'],
+  };
+  const [cls, label] = map[d] || ['tag-man', d];
+  return `<span class="tag ${cls}">${label}</span>`;
+}
+function consistencyBadge(v) {
+  const colors = {
+    consistent: 'color:var(--green)', image_clarifies_text: 'color:var(--blue)',
+    text_only: 'color:var(--muted)', image_only: 'color:var(--yellow)',
+    conflict: 'color:var(--red)', unknown: 'color:var(--muted)',
+  };
+  return `<span style="font-weight:600;${colors[v]||''}">${v}</span>`;
+}
+
+async function runClassify() {
+  const title = document.getElementById('inp-title').value.trim();
+  if (!title) { alert('Vui lòng nhập tiêu đề.'); return; }
+
+  const apiKey = document.getElementById('inp-api-key').value.trim();
+  if (!apiKey) { alert('Vui lòng nhập API Key.'); return; }
+  
+  // Save API key to localStorage
+  localStorage.setItem('test_api_key', apiKey);
+
+  const description = document.getElementById('inp-desc').value.trim();
+  const priceRaw = document.getElementById('inp-price').value;
+  const price = priceRaw ? parseFloat(priceRaw) : null;
+  const fast = document.getElementById('chk-fast').checked;
+  const analyzeImage = document.getElementById('chk-image').checked;
+
+  let image_urls = [];
+  if (analyzeImage) {
+    const activeTab = document.getElementById('pane-url').style.display === 'none' ? 'upload' : 'url';
+    if (activeTab === 'upload') {
+      image_urls = [...uploadedDataUrls];
+    } else {
+      const raw = document.getElementById('inp-images').value.trim();
+      image_urls = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+    }
+  }
+
+  document.getElementById('pipeline').classList.add('visible');
+  ['1','2','3','5','6','Final'].forEach(id => { setStep(id, ''); setBody(id, ''); });
+  hideSuggestion();
+  hideGenResult();
+  hideFieldsCard();
+  document.getElementById('tree-card').style.display = 'none';
+
+  const btn = document.getElementById('btn-classify');
+  const icon = document.getElementById('btn-icon-classify');
+  setAllBtns(true);
+  icon.innerHTML = '<span class="spinner"></span>';
+
+  try {
+    setStep('1', 'active');
+    setBody('1', `<span style="color:var(--muted);font-size:.82rem">Đang gọi API${fast ? ' <span class="badge-skip">⚡ Fast mode</span>' : ''}…</span>`);
+
+    const resp = await fetch(`${API}/classify`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey
+      },
+      body: JSON.stringify({ title, description, price, image_urls, fast }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+      throw new Error(err.detail || resp.statusText);
+    }
+    const data = await resp.json();
+
+    setStep('1', 'done');
+    const u = data.understanding || {};
+    if (fast) {
+      setBody('1', `<span class="badge-skip">⚡ Skipped (Fast mode)</span>
+        <div style="font-size:.78rem;color:var(--muted);margin-top:6px">LLM understand bị bỏ qua — dùng title gốc làm embedding text</div>`);
+    } else {
+      const normText = u.normalized_product_text || '';
+      const sugTitle = u.suggested_title || '';
+      const sugDesc = u.suggested_description || '';
+      setBody('1', `<div class="kv-grid">
+        <span class="kv-key">normalized_text</span>
+        <span class="kv-val">${esc(normText || '–')}</span>
+        <span class="kv-key">suggested_title</span>
+        <span class="kv-val">${esc(sugTitle || '–')}</span>
+        <span class="kv-key">suggested_desc</span>
+        <span class="kv-val">${esc(sugDesc || '–')}</span>
+        <span class="kv-key">confidence</span>
+        <span class="kv-val">${confBar(u.confidence || 0)}</span>
+        <span class="kv-key">consistency</span>
+        <span class="kv-val">${consistencyBadge(u.text_image_consistency || 'unknown')}</span>
+      </div>`);
+      if (sugTitle || sugDesc) {
+        showSuggestion(sugTitle || title, sugDesc || description);
+      }
+    }
+
+    setStep('2', 'done');
+    setBody('2', `<pre class="code">${esc(data.product_embedding_text || '–')}</pre>`);
+
+    setStep('3', 'done');
+    const candidates = data.candidates || [];
+    const topN = candidates.slice(0, 5);
+    const rerankedId = data.rerank?.category_id;
+    const listHtml = topN.map((c, i) => {
+      const isSelected = c.category_id === rerankedId;
+      return `<div class="candidate ${isSelected ? 'selected' : ''}">
+        <span class="c-rank">#${i+1}</span>
+        <div class="c-info">
+          <div class="c-name">${esc(c.name)}</div>
+          <div class="c-path">${esc(c.path || '')}</div>
+        </div>
+        <span class="c-score">${(c.similarity_score*100).toFixed(1)}%</span>
+      </div>`;
+    }).join('');
+    setBody('3', `<div style="font-size:.78rem;color:var(--muted);margin-bottom:6px">Top K = ${data.vector_top_k} · Hiển thị top 5</div>
+      <div class="candidate-list">${listHtml || '<span style="color:var(--red)">Không có kết quả – cần build index trước</span>'}</div>`);
+
+    setStep('5', 'done');
+    const r = data.rerank || {};
+    const vectorSkipped = r.reason === 'vector similarity high, rerank skipped';
+    const alts = (r.alternatives || []).map(a =>
+      `<div style="font-size:.78rem;color:var(--muted)">id=${a.category_id} · conf=${Math.round((a.confidence||0)*100)}%</div>`
+    ).join('');
+    setBody('5', `
+      ${vectorSkipped ? `<span class="badge-skip">⚡ Vector shortcut — LLM skipped</span>` : ''}
+      <div class="kv-grid" style="margin-top:${vectorSkipped?'8px':'0'}">
+        <span class="kv-key">category_id</span>
+        <span class="kv-val" style="font-weight:700;color:var(--accent2)">${r.category_id ?? 'null'}</span>
+        <span class="kv-key">confidence</span>
+        <span class="kv-val">${confBar(r.confidence || 0)}</span>
+        <span class="kv-key">reason</span>
+        <span class="kv-val">${esc(r.reason || '–')}</span>
+      </div>
+      ${alts ? `<div style="margin-top:8px;font-size:.78rem;color:var(--muted)">Alternatives:</div>${alts}` : ''}`);
+
+    setStep('6', 'done');
+    const d = data.decision || 'manual_select';
+    const thresholdInfo = {
+      auto_assign:   'conf ≥ 90% + vector sim ≥ 78% + margin ≥ 6%',
+      preselect:     'conf ≥ 75% (chọn sẵn, user được đổi)',
+      suggest_top3:  'conf ≥ 55% (gợi ý 3 lựa chọn)',
+      manual_select: 'conf < 55% hoặc text/ảnh mâu thuẫn',
+    };
+    setBody('6', `<div style="margin-bottom:10px">${decisionTag(d)}</div>
+      <div style="font-size:.8rem;color:var(--muted)">${thresholdInfo[d] || ''}</div>`);
+
+    setStep('Final', 'done');
+    const sel = data.selected_category;
+    if (sel) {
+      setBody('Final', `<div class="result-box">
+        <div class="result-name">${esc(sel.name)}</div>
+        <div class="result-path">📂 ${esc(sel.path || '')}</div>
+        ${sel.description ? `<div class="result-desc">${esc(sel.description)}</div>` : ''}
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          ${decisionTag(d)}
+          <span style="font-size:.78rem;color:var(--muted)">ID: ${sel.category_id}</span>
+          ${fast ? '<span class="badge-skip">⚡ Fast</span>' : ''}
+          ${vectorSkipped ? '<span class="badge-skip">⚡ Vector shortcut</span>' : ''}
+        </div>
+      </div>`);
+      highlightCategoryPath(sel.category_id);
+      loadAndShowFields(sel.category_id, sel.name);
+    } else {
+      setBody('Final', `<div class="error-msg">Không xác định được danh mục. Vui lòng chọn thủ công.</div>`);
+    }
+
+  } catch (err) {
+    setStep('1', 'error');
+    setBody('1', `<div class="error-msg">${esc(String(err.message || err))}</div>`);
+  } finally {
+    setAllBtns(false);
+    icon.innerHTML = '▶';
+  }
+}
+
+let lastSuggestion = { title: '', desc: '' };
+
+function showSuggestion(title, desc) {
+  lastSuggestion = { title, desc };
+  document.getElementById('suggest-title').textContent = title;
+  document.getElementById('suggest-desc').textContent = desc;
+  document.getElementById('suggest-box').classList.add('visible');
+}
+
+function hideSuggestion() {
+  document.getElementById('suggest-box').classList.remove('visible');
+  lastSuggestion = { title: '', desc: '' };
+}
+
+function applySuggestionOnly() {
+  if (!lastSuggestion.title) return;
+  document.getElementById('inp-title').value = lastSuggestion.title;
+  document.getElementById('inp-desc').value = lastSuggestion.desc;
+  hideSuggestion();
+}
+
+function applySuggestion() {
+  if (!lastSuggestion.title) return;
+  document.getElementById('inp-title').value = lastSuggestion.title;
+  document.getElementById('inp-desc').value = lastSuggestion.desc;
+  hideSuggestion();
+  runClassify();
+}
+
+function dismissSuggestion() {
+  hideSuggestion();
+}
+
+async function resizeAndCompress(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_WIDTH = 800;
+        const MAX_HEIGHT = 800;
+        let { width, height } = img;
+
+        if (width > MAX_WIDTH || height > MAX_HEIGHT) {
+          if (width > height) {
+            height = Math.round((height * MAX_WIDTH) / width);
+            width = MAX_WIDTH;
+          } else {
+            width = Math.round((width * MAX_HEIGHT) / height);
+            height = MAX_HEIGHT;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob((blob) => {
+          const compressedReader = new FileReader();
+          compressedReader.onload = (ev) => resolve(ev.target.result);
+          compressedReader.readAsDataURL(blob);
+        }, 'image/jpeg', 0.85);
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Category Tree ─────────────────────────────────────────────────────────
+
+async function loadCategories() {
+  try {
+    const resp = await fetch('/categories.json');
+    categoriesData = await resp.json();
+    categoryMap = {};
+    categoriesData.forEach(cat => {
+      categoryMap[cat.id] = cat;
+      cat.children = [];
+    });
+    categoriesData.forEach(cat => {
+      if (cat.parent_id && categoryMap[cat.parent_id]) {
+        categoryMap[cat.parent_id].children.push(cat);
+      }
+    });
+  } catch (err) {
+    console.error('Failed to load categories:', err);
+  }
+}
+
+function buildTreeHTML(node, level = 0) {
+  const hasChildren = node.children && node.children.length > 0;
+  const toggle = hasChildren ? '<span class="tree-toggle" onclick="toggleNode(event, ' + node.id + ')">▸</span>' : '<span class="tree-toggle"></span>';
+  let html = `<div class="tree-node ${level === 0 ? 'root' : ''}" data-id="${node.id}">`;
+  html += `<div class="tree-label" data-id="${node.id}">${toggle}<span>${esc(node.name)}</span></div>`;
+  if (hasChildren) {
+    html += '<div class="tree-children">';
+    node.children.forEach(child => {
+      html += buildTreeHTML(child, level + 1);
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderTree() {
+  const container = document.getElementById('tree-container');
+  if (!categoriesData.length) {
+    container.innerHTML = '<span style="color:var(--muted)">Đang tải danh mục...</span>';
+    return;
+  }
+  const roots = categoriesData.filter(c => !c.parent_id);
+  container.innerHTML = roots.map(root => buildTreeHTML(root)).join('');
+}
+
+function toggleNode(event, nodeId) {
+  event.stopPropagation();
+  const node = document.querySelector(`.tree-node[data-id="${nodeId}"]`);
+  if (!node) return;
+  const children = node.querySelector('.tree-children');
+  const toggle = node.querySelector('.tree-toggle');
+  if (!children) return;
+  const isExpanded = children.classList.contains('expanded');
+  children.classList.toggle('expanded');
+  toggle.textContent = isExpanded ? '▸' : '▾';
+}
+
+function highlightCategoryPath(categoryId) {
+  if (!categoryId || !categoryMap[categoryId]) return;
+  document.getElementById('tree-card').style.display = '';
+  
+  // Clear previous highlights
+  document.querySelectorAll('.tree-label').forEach(el => {
+    el.classList.remove('selected', 'path');
+  });
+  
+  // Build path from root to selected
+  const path = [];
+  let current = categoryMap[categoryId];
+  while (current) {
+    path.unshift(current.id);
+    current = current.parent_id ? categoryMap[current.parent_id] : null;
+  }
+  
+  // Expand all ancestors and highlight path
+  path.forEach((id, index) => {
+    const node = document.querySelector(`.tree-node[data-id="${id}"]`);
+    if (!node) return;
+    
+    const label = node.querySelector('.tree-label');
+    if (index === path.length - 1) {
+      label.classList.add('selected');
+    } else {
+      label.classList.add('path');
+    }
+    
+    // Expand node
+    const children = node.querySelector('.tree-children');
+    const toggle = node.querySelector('.tree-toggle');
+    if (children && !children.classList.contains('expanded')) {
+      children.classList.add('expanded');
+      if (toggle) toggle.textContent = '▾';
+    }
+  });
+  
+  // Scroll selected into view
+  const selected = document.querySelector('.tree-label.selected');
+  if (selected) {
+    selected.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
+// ── Helper: get image URLs (upload or URL tab) ───────────────────
+function getImageUrls() {
+  const isUrl = document.getElementById('pane-url').style.display !== 'none';
+  if (isUrl) {
+    const raw = document.getElementById('inp-images').value.trim();
+    return raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+  }
+  return [...uploadedDataUrls];
+}
+function setAllBtns(disabled) {
+  ['btn-classify','btn-img','btn-text','btn-full'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  });
+}
+
+// ── Hide/show gen-result and fields ──────────────────────────────
+function hideGenResult() {
+  const c = document.getElementById('gen-result');
+  c.classList.remove('visible'); c.style.display = 'none';
+}
+function hideFieldsCard() {
+  const c = document.getElementById('fields-card');
+  c.classList.remove('visible'); c.style.display = 'none';
+  currentFields = []; currentCategoryId = null;
+}
+
+// ── AI GENERATE ───────────────────────────────────────────────────
+const GEN_ICONS   = { 'from-images':'🖼️', 'from-text':'📝', 'full':'✨' };
+const GEN_BTN_IDS = { 'from-images':['btn-img','btn-icon-img'], 'from-text':['btn-text','btn-icon-text'], 'full':['btn-full','btn-icon-full'] };
+
+async function callGenerate(mode) {
+  const title  = document.getElementById('inp-title').value.trim();
+  const desc   = document.getElementById('inp-desc').value.trim();
+  const pRaw   = document.getElementById('inp-price').value;
+  const price  = pRaw ? parseFloat(pRaw) : null;
+  const images = getImageUrls();
+
+  if ((mode === 'from-images' || mode === 'full') && images.length === 0) {
+    alert('Cần ít nhất 1 ảnh cho nút này. Upload ảnh hoặc nhập URL ảnh.');
+    return;
+  }
+  if (mode === 'from-text' && !title && !desc) {
+    alert('Cần nhập ít nhất tiêu đề hoặc mô tả sản phẩm.');
+    return;
+  }
+
+  document.getElementById('pipeline').classList.remove('visible');
+  hideFieldsCard(); hideSuggestion();
+
+  const [btnId, iconId] = GEN_BTN_IDS[mode];
+  setAllBtns(true);
+  document.getElementById(iconId).innerHTML = '<span class="spinner"></span>';
+
+  let endpoint, body;
+  if (mode === 'from-images') {
+    endpoint = '/generate/from-images';
+    body = { image_urls: images, existing_title: title, existing_description: desc, generate_category: true };
+  } else if (mode === 'from-text') {
+    endpoint = '/generate/from-text';
+    body = { title, description: desc, price };
+  } else {
+    endpoint = '/generate/full';
+    body = { image_urls: images, title, description: desc, price };
+  }
+
+  showGenResult(mode, '<div style="color:var(--muted);font-size:.85rem">⏳ Đang xử lý…</div>');
+
+  try {
+    const resp = await fetch(`${API}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+      throw new Error(err.detail || resp.statusText);
+    }
+    const data = await resp.json();
+    renderGenResult(mode, data);
+  } catch (err) {
+    showGenResult(mode, `<div class="error-msg">${esc(String(err.message || err))}</div>`);
+  } finally {
+    setAllBtns(false);
+    document.getElementById(iconId).innerHTML = GEN_ICONS[mode];
+  }
+}
+
+function showGenResult(mode, html) {
+  const card = document.getElementById('gen-result');
+  card.style.display = 'block'; card.classList.add('visible');
+  const labels  = { 'from-images':'Từ ảnh', 'from-text':'Từ text', 'full':'AI Đầy đủ' };
+  const classes  = { 'from-images':'gen-mode-img', 'from-text':'gen-mode-text', 'full':'gen-mode-full' };
+  const badge = document.getElementById('gen-mode-badge');
+  badge.textContent = labels[mode] || mode;
+  badge.className = 'gen-mode-badge ' + (classes[mode] || '');
+  document.getElementById('gen-body').innerHTML = html;
+}
+
+function renderGenResult(mode, data) {
+  const gen  = data.generated || data;
+  const cat  = gen.category_suggestion || data.category_suggestion;
+  const cands= data.candidates || [];
+  let html = '';
+
+  // Generated title + description
+  if (gen.title || gen.description) {
+    html += '<div class="gen-output-row">';
+    if (gen.title) html += `<div class="gen-field">
+      <div class="gen-field-label">📌 Tiêu đề được sinh</div>
+      <div class="gen-field-value">${esc(gen.title)}</div>
+      <button class="btn-sm" style="margin-top:8px" data-val="${esc(gen.title)}" onclick="document.getElementById('inp-title').value=this.getAttribute('data-val')">↑ Dùng tiêu đề</button>
+    </div>`;
+    if (gen.description) html += `<div class="gen-field">
+      <div class="gen-field-label">📝 Mô tả được sinh</div>
+      <div class="gen-field-value">${esc(gen.description)}</div>
+      <button class="btn-sm" style="margin-top:8px" data-val="${esc(gen.description)}" onclick="document.getElementById('inp-desc').value=this.getAttribute('data-val')">↑ Dùng mô tả</button>
+    </div>`;
+    html += '</div>';
+  }
+
+  // Price suggestion
+  if (gen.price_suggestion) {
+    const ps = gen.price_suggestion;
+    html += `<div class="gen-field" style="margin-bottom:12px">
+      <div class="gen-field-label">💰 Giá ước tính</div>
+      <div class="gen-field-value">
+        ${ps.estimate ? `<strong>${Number(ps.estimate).toLocaleString('vi-VN')}đ</strong>` : '–'}
+        ${ps.range_low && ps.range_high ? ` (${Number(ps.range_low).toLocaleString('vi-VN')}đ – ${Number(ps.range_high).toLocaleString('vi-VN')}đ)` : ''}
+        ${ps.note ? `<div style="font-size:.78rem;color:var(--muted);margin-top:3px">${esc(ps.note)}</div>` : ''}
+      </div></div>`;
+  }
+
+  // Category suggestion
+  if (cat && cat.category_id) {
+    const conf = cat.confidence != null ? Math.round(cat.confidence * 100) : null;
+    html += `<div class="gen-cat-card">
+      <div class="gen-cat-header">
+        <span>🏷️</span>
+        <span class="gen-cat-name">${esc(cat.category_name || '–')}</span>
+        ${conf != null ? `<span class="gen-cat-conf">${conf}%</span>` : ''}
+      </div>
+      ${cat.category_path ? `<div class="gen-cat-path">📂 ${esc(cat.category_path)}</div>` : ''}
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        ${cat.decision ? decisionTag(cat.decision) : ''}
+        <span style="font-size:.75rem;color:var(--muted)">ID: ${cat.category_id}</span>
+      </div>
+      ${cat.llm_reason ? `<div style="margin-top:8px;font-size:.8rem;color:var(--muted);font-style:italic">&ldquo;${esc(cat.llm_reason)}&rdquo;</div>` : ''}
+    </div>`;
+  }
+
+  // AI-detected attributes from image
+  const detectedAttrs = gen.detected_attributes || gen.attributes_from_image || [];
+  if (detectedAttrs.length > 0) {
+    html += `<div style="margin-bottom:12px">
+      <div class="gen-field-label" style="margin-bottom:6px">🔍 Nhận diện từ ảnh</div>
+      <div class="gen-attrs-detected">
+        ${detectedAttrs.map(a => `<span class="gen-attr-chip"><strong>${esc(a.key||a.name||'')}:</strong> ${esc(a.value||'')}</span>`).join('')}
+      </div></div>`;
+  }
+
+  // Candidates
+  if (cands.length > 0) {
+    html += `<div>
+      <div class="gen-field-label" style="margin-bottom:6px">📊 Candidates</div>
+      <div class="candidate-list">
+        ${cands.slice(0,5).map((c,i) => {
+          const isSel = cat && c.category_id === cat.category_id;
+          return `<div class="candidate ${isSel?'selected':''}">
+            <span class="c-rank">#${i+1}</span>
+            <div class="c-info"><div class="c-name">${esc(c.name)}</div><div class="c-path">${esc(c.path||'')}</div></div>
+            <span class="c-score">${((c.similarity_score||0)*100).toFixed(1)}%</span>
+          </div>`;
+        }).join('')}
+      </div></div>`;
+  }
+
+  showGenResult(mode, html);
+
+  if (cat && cat.category_id) {
+    highlightCategoryPath(cat.category_id);
+    const inline = cat.attributes || [];
+    if (inline.length > 0) {
+      showFieldsCard(cat.category_id, cat.category_name, inline);
+    } else {
+      loadAndShowFields(cat.category_id, cat.category_name);
+    }
+    if (gen.title && !document.getElementById('inp-title').value)
+      document.getElementById('inp-title').value = gen.title;
+    if (gen.description && !document.getElementById('inp-desc').value)
+      document.getElementById('inp-desc').value = gen.description;
+    // When attrs come inline (from generate endpoints), suggestAndFillFields
+    // is not triggered by loadAndShowFields — call it explicitly now.
+    if (inline.length > 0) {
+      const userTitle = (document.getElementById('inp-title')?.value || '').trim();
+      const userDesc  = (document.getElementById('inp-desc')?.value  || '').trim();
+      // Use AI-generated content as richer context (includes color/model from image analysis).
+      // Merge with user's original desc to preserve condition hints ("máy zin", etc.)
+      const aiTitle = (gen.title || '').trim();
+      const aiDesc  = (gen.description || '').trim();
+      const t = aiTitle || userTitle;
+      const d = (aiDesc && userDesc && aiDesc !== userDesc)
+                ? aiTitle + '\n' + aiDesc + '\n' + userDesc
+                : (aiDesc || userDesc);
+      if (t || d) suggestAndFillFields(cat.category_id, t || d, d);
+    }
+  }
+}
+
+// ── FIELDS FORM ───────────────────────────────────────────────────
+async function loadAndShowFields(categoryId, categoryName) {
+  try {
+    const resp = await fetch(`${API}/categories/${categoryId}/attributes`);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    showFieldsCard(categoryId, categoryName, data.attributes || []);
+    // Auto-suggest field values using AI if we have product info
+    const title = (document.getElementById('inp-title')?.value || '').trim();
+    const desc  = (document.getElementById('inp-desc')?.value  || '').trim();
+    if (title && (data.attributes || []).length > 0) {
+      suggestAndFillFields(categoryId, title, desc);
+    }
+  } catch (e) {
+    showFieldsCard(categoryId, categoryName, []);
+  }
+}
+
+async function suggestAndFillFields(categoryId, title, description) {
+  const suggestBtn = document.getElementById('fields-ai-suggest-btn');
+  const progressEl = document.getElementById('fields-progress');
+  const progressText = document.getElementById('fields-progress-text');
+  if (suggestBtn) { suggestBtn.disabled = true; suggestBtn.textContent = '⏳ Đang gợi ý...'; }
+  if (progressEl) { progressEl.classList.add('visible'); }
+  if (progressText) { progressText.textContent = 'AI đang phân tích thuộc tính và gợi ý giá trị...'; }
+  try {
+    const resp = await fetch(`${API}/categories/${categoryId}/suggest-fields`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, description }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    console.log('[suggest-fields] suggestions:', data.suggestions);
+    applyFieldSuggestions(data.suggestions || {});
+    if (suggestBtn) { suggestBtn.textContent = '✓ Đã gợi ý'; }
+    if (progressEl) { progressEl.classList.remove('visible'); }
+  } catch (e) {
+    console.warn('suggest-fields failed:', e);
+    if (suggestBtn) { suggestBtn.disabled = false; suggestBtn.textContent = '🤖 AI Gợi ý'; }
+    if (progressEl) { progressEl.classList.remove('visible'); }
+  }
+}
+
+// Helper: find the best matching option from a list of {value, text} pairs.
+// Strategy: 1) exact value match  2) exact label match  3) label contains returned val
+// 4) returned val contains option value  5) option value contains returned val
+function _findBestOption(options, strVal) {
+  const v = strVal.toLowerCase().trim();
+  return options.find(o => o.value.toLowerCase() === v)
+      || options.find(o => o.text.toLowerCase()  === v)
+      || options.find(o => o.text.toLowerCase().includes(v))
+      || options.find(o => v.includes(o.value.toLowerCase()) && o.value.length > 2)
+      || options.find(o => v.includes(o.text.toLowerCase())  && o.text.length  > 2)
+      || null;
+}
+
+function applyFieldSuggestions(suggestions) {
+  if (!suggestions || Object.keys(suggestions).length === 0) return;
+  Object.entries(suggestions).forEach(([fieldKey, value]) => {
+    if (value === null || value === undefined || value === '') return;
+    const strVal = String(value);
+    // Try select element
+    const sel = document.querySelector(`select[data-field-key="${fieldKey}"]`);
+    if (sel) {
+      const allOpts = Array.from(sel.options).slice(1); // skip placeholder
+      const opt = _findBestOption(allOpts, strVal);
+      if (opt) {
+        sel.value = opt.value;
+        sel.dispatchEvent(new Event('change'));
+      }
+      return;
+    }
+    // Try radio group
+    const radios = document.querySelectorAll(`input[name="field_${fieldKey}"]`);
+    if (radios.length) {
+      const radioOpts = Array.from(radios).map(r => ({ value: r.value, text: r.closest('.radio-option')?.querySelector('span')?.textContent || r.value, el: r }));
+      const match = _findBestOption(radioOpts, strVal);
+      if (match) {
+        const labelEl = match.el.closest('.radio-option');
+        if (labelEl) selectRadio(labelEl, fieldKey);
+      }
+      return;
+    }
+    // Try text input
+    const inp = document.querySelector(`input[data-field-key="${fieldKey}"]`);
+    if (inp) {
+      inp.value = strVal;
+      inp.dispatchEvent(new Event('input'));
+    }
+  });
+  updateFieldsJSON();
+}
+
+function onAiSuggestClick() {
+  const title = (document.getElementById('inp-title')?.value || '').trim();
+  const desc  = (document.getElementById('inp-desc')?.value  || '').trim();
+  if (!title) { alert('Nhập tiêu đề sản phẩm trước!'); return; }
+  if (!currentCategoryId) return;
+  suggestAndFillFields(currentCategoryId, title, desc);
+}
+
+function showFieldsCard(categoryId, categoryName, fields) {
+  currentCategoryId = categoryId;
+  currentFields = fields || [];
+  const card = document.getElementById('fields-card');
+  card.classList.add('visible'); card.style.display = 'block';
+  document.getElementById('fields-cat-badge').textContent = categoryName || `ID ${categoryId}`;
+  document.getElementById('fields-json-out').classList.remove('visible');
+  const syncHint  = document.getElementById('fields-sync-hint');
+  const actionsEl = document.getElementById('fields-actions');
+  const body      = document.getElementById('fields-form-body');
+  if (currentFields.length === 0) {
+    syncHint.style.display = 'inline-block';
+    actionsEl.style.display = 'none';
+    body.innerHTML = `<div class="sync-needed-msg">⚠️ Chưa có fields cho danh mục này. Vào <strong>Admin Dashboard → Danh mục → Sync từ Omni</strong> để đồng bộ thuộc tính trước.</div>`;
+    return;
+  }
+  syncHint.style.display = 'none';
+  actionsEl.style.display = 'flex';
+  body.innerHTML = buildFieldsForm(currentFields);
+}
+
+function buildFieldsForm(fields) {
+  const root  = fields.filter(f => !f.parent_field_id);
+  const cond  = fields.filter(f =>  f.parent_field_id);
+  root.sort((a,b) => (a.sort_order||0)-(b.sort_order||0));
+  cond.sort((a,b) => (a.sort_order||0)-(b.sort_order||0));
+  return [...root.map(f => renderFieldGroup(f,false)), ...cond.map(f => renderFieldGroup(f,true))].join('');
+}
+
+function renderFieldGroup(f, isCond) {
+  const key  = f.field_key || String(f.id);
+  const lbl  = esc(f.field_label || f.field_key || f.name || '');
+  const req  = f.is_required  ? '<span class="field-req">*</span>' : '';
+  const dot  = f.is_featured  ? '<span class="field-featured-dot" title="Nổi bật"></span>' : '';
+  const cBadge = isCond ? `<span class="field-cond-badge">khi: ${esc(String(f.parent_field_value||''))}</span>` : '';
+  const labelRow = `<div class="field-label-row">${dot}<span class="field-lbl">${lbl}</span>${req}${cBadge}</div>`;
+  const inp  = renderFieldInput(f);
+  const hiddenCls = isCond ? ' conditional-hidden' : '';
+  const condAttrs = isCond ? ` data-parent-field="${esc(String(f.parent_field_id))}" data-parent-value="${esc(String(f.parent_field_value||''))}"` : '';
+  return `<div class="field-group${hiddenCls}" data-field-id="${f.id||''}"${condAttrs}>${labelRow}${inp}</div>`;
+}
+
+function renderFieldInput(f) {
+  const type = f.field_type || f.type || 'text';
+  const key  = esc(f.field_key || String(f.id));
+  const opts = f.field_options || f.options || [];
+  if (type === 'select') {
+    const feat = opts.filter(o => o.featured).sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
+    const rest = opts.filter(o =>!o.featured).sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
+    let optsHtml = `<option value="">-- Chọn ${esc(f.field_label||'')} --</option>`;
+    if (feat.length) optsHtml += `<optgroup label="Phổ biến">${feat.map(o=>`<option value="${esc(String(o.value))}">${esc(o.label||o.value)}</option>`).join('')}</optgroup>`;
+    if (rest.length) optsHtml += `<optgroup label="Khác">${rest.map(o=>`<option value="${esc(String(o.value))}">${esc(o.label||o.value)}</option>`).join('')}</optgroup>`;
+    return `<select class="field-select" data-field-key="${key}" data-field-id="${f.id||''}" onchange="onFieldChange(this)">${optsHtml}</select>`;
+  }
+  if (type === 'radio') {
+    const radios = opts.map(o =>
+      `<label class="radio-option" onclick="selectRadio(this,'${key}')">
+        <input type="radio" name="field_${key}" value="${esc(String(o.value))}" />
+        ${esc(o.label||o.value)}
+      </label>`).join('');
+    return `<div class="radio-group" data-field-key="${key}" data-field-id="${f.id||''}">${radios}</div>`;
+  }
+  return `<input class="field-input" type="text" data-field-key="${key}" data-field-id="${f.id||''}" placeholder="${esc(f.field_label||f.field_key||'')}..." oninput="updateFieldsJSON()" />`;
+}
+
+function selectRadio(labelEl, fieldKey) {
+  const group = labelEl.closest('.radio-group');
+  if (!group) return;
+  group.querySelectorAll('.radio-option').forEach(l => l.classList.remove('checked'));
+  labelEl.classList.add('checked');
+  const inp = labelEl.querySelector('input[type=radio]');
+  if (inp) { inp.checked = true; onFieldChangeByKey(fieldKey, inp.value, labelEl.closest('[data-field-id]')?.dataset.fieldId); }
+}
+
+function onFieldChange(sel) { onFieldChangeByKey(sel.dataset.fieldKey, sel.value, sel.dataset.fieldId); }
+
+function onFieldChangeByKey(fieldKey, value, fieldId) {
+  document.querySelectorAll('#fields-form-body .field-group[data-parent-field]').forEach(g => {
+    const pid = g.dataset.parentField; const pval = g.dataset.parentValue;
+    const match = (fieldId && String(pid) === String(fieldId)) || pid === fieldKey;
+    if (match) {
+      const show = value === pval;
+      g.classList.toggle('conditional-hidden', !show);
+      if (!show) clearGroupFields(g);
+    }
+  });
+  updateFieldsJSON();
+}
+
+function clearGroupFields(group) {
+  group.querySelectorAll('.field-select').forEach(e => { e.value = ''; });
+  group.querySelectorAll('.field-input').forEach(e => { e.value = ''; });
+  group.querySelectorAll('.radio-option').forEach(e => e.classList.remove('checked'));
+  group.querySelectorAll('input[type=radio]').forEach(e => { e.checked = false; });
+}
+
+function collectFieldValues() {
+  const vals = {};
+  document.querySelectorAll('#fields-form-body .field-group:not(.conditional-hidden) .field-select').forEach(e => { if (e.value) vals[e.dataset.fieldKey] = e.value; });
+  document.querySelectorAll('#fields-form-body .field-group:not(.conditional-hidden) .field-input').forEach(e => { if (e.value.trim()) vals[e.dataset.fieldKey] = e.value.trim(); });
+  document.querySelectorAll('#fields-form-body .field-group:not(.conditional-hidden) .radio-group').forEach(g => { const c = g.querySelector('.radio-option.checked input'); if (c?.value) vals[g.dataset.fieldKey] = c.value; });
+  return vals;
+}
+
+function updateFieldsJSON() {
+  const out = document.getElementById('fields-json-out');
+  if (out.classList.contains('visible')) out.textContent = JSON.stringify(collectFieldValues(), null, 2);
+}
+
+function showFieldsJSON(evt) {
+  const vals = collectFieldValues();
+  const out = document.getElementById('fields-json-out');
+  out.textContent = JSON.stringify(vals, null, 2);
+  out.classList.add('visible');
+  const json = JSON.stringify(vals, null, 2);
+  navigator.clipboard.writeText(json).then(() => {
+    const btn = evt.target; const orig = btn.textContent;
+    btn.textContent = '✅ Đã copy!';
+    setTimeout(() => btn.textContent = orig, 2000);
+  }).catch(() => {});
+}
+
+function clearFieldValues() {
+  document.querySelectorAll('#fields-form-body .field-select').forEach(e => { e.value = ''; });
+  document.querySelectorAll('#fields-form-body .field-input').forEach(e => { e.value = ''; });
+  document.querySelectorAll('#fields-form-body .radio-option').forEach(e => e.classList.remove('checked'));
+  document.querySelectorAll('#fields-form-body input[type=radio]').forEach(e => { e.checked = false; });
+  document.querySelectorAll('#fields-form-body .field-group[data-parent-field]').forEach(g => g.classList.add('conditional-hidden'));
+  document.getElementById('fields-json-out').classList.remove('visible');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const savedApiKey = localStorage.getItem('test_api_key');
+  if (savedApiKey) document.getElementById('inp-api-key').value = savedApiKey;
+  document.getElementById('inp-title').addEventListener('keydown', e => {
+    if (e.key === 'Enter') runClassify();
+  });
+  loadCategories().then(() => renderTree());
+});
+</script>
+</body>
+</html>
