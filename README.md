@@ -656,19 +656,19 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 👥 Team
 
-- **Backend Lead:** Your Name
-- **Frontend Lead:** Your Name
-- **DevOps Lead:** Your Name
-- **Product Owner:** Your Name
+- **Backend Lead:** Me
+- **Frontend Lead:** Me
+- **DevOps Lead:** Me
+- **Product Owner:** Me
 
 ---
 
 ## 📞 Support
 
-- **Email:** support@yourcompany.com
-- **Documentation:** https://docs.yourcompany.com
-- **Status Page:** https://status.yourcompany.com
-- **Issues:** https://github.com/yourorg/autocategory/issues
+- **Email:** nguoi3tay@gmail.com
+- **Documentation:** 
+- **Status Page:** 
+- **Issues:** 
 
 ---
 
