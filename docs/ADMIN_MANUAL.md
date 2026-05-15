@@ -414,17 +414,6 @@ Navigate: Configuration
 ```
 Navigate: Configuration → External Services
 
-┌─────────────────────────────────────────────────────┐
-│ ProtonX API Configuration                           │
-├─────────────────────────────────────────────────────┤
-│ API Key:             [●●●●●●●●●●●●●●●●●●●●]  [Show]  │
-│ Endpoint:            https://api.protonx.ai/v1      │
-│ Status:              🟢 Connected                   │
-│ Last Test:           2026-05-06 10:30:00            │
-│                               [Test] [Update]       │
-└─────────────────────────────────────────────────────┘
-```
-
 ### 6.4 Test Configuration
 
 ```

@@ -146,7 +146,7 @@ Mô tả: Máy tính xách tay, MacBook, laptop Dell, HP, Asus, Lenovo, ThinkPad
    ↓
    Build category_document
    ↓
-   Embed category_document bằng ProtonX Embeddings
+   Embed category_document bằng Alibaba Embeddings
    ↓
    Upsert vector + payload vào Qdrant
 
@@ -159,7 +159,7 @@ Mô tả: Máy tính xách tay, MacBook, laptop Dell, HP, Asus, Lenovo, ThinkPad
    ↓
    Build product embedding text
    ↓
-   Embed product bằng ProtonX Embeddings
+   Embed product bằng Alibaba Embeddings
    ↓
    Qdrant search top K category
    ↓
@@ -215,12 +215,12 @@ Mô tả: Máy tính xách tay, MacBook, laptop Dell, HP, Asus, Lenovo, ThinkPad
 
 ### 4.4. Embed category
 
-Dùng ProtonX Embeddings để tạo vector:
+Dùng Alibaba Embeddings để tạo vector:
 
 ```text
 category_document
    ↓
-ProtonX Embeddings
+Alibaba Embeddings
    ↓
 category_vector
 ```
@@ -231,7 +231,7 @@ Lưu ý bắt buộc:
 Category embedding model = Product embedding model
 ```
 
-Nếu category dùng ProtonX Embeddings, product cũng phải dùng ProtonX Embeddings.
+Nếu category dùng Alibaba Embeddings, product cũng phải dùng Alibaba Embeddings.
 
 ### 4.5. Upsert vào Qdrant
 
@@ -331,7 +331,7 @@ Nội dung chuẩn hóa: Bán điện thoại Apple iPhone 13 Pro Max 256GB, ful
 ```text
 product_embedding_text
    ↓
-ProtonX Embeddings
+Alibaba Embeddings
    ↓
 product_vector
 ```
@@ -542,7 +542,7 @@ Mô tả gốc: {post.get("description", "")}
 Nội dung chuẩn hóa: {understanding["normalized_product_text"]}
 """.strip()
 
-    product_vector = protonx_embed(product_embedding_text)
+    product_vector = embed(product_embedding_text)
 
     top_k = 30 if understanding["confidence"] < 0.75 else 20
 
