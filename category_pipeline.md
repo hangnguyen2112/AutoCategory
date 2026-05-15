@@ -675,7 +675,7 @@ Qdrant lưu:
 
 Runtime:
 - E4B tạo normalized_product_text
-- ProtonX embed product
+- Alibaba embed product
 - Qdrant search top K
 - E4B rerank
 - threshold quyết định auto/suggest/manual

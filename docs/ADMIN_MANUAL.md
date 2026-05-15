@@ -408,9 +408,6 @@ Navigate: Configuration
 ```
 
 **⚠️ Changes require service restart!**
-
-### 6.3 ProtonX API Key (for future integration)
-
 ```
 Navigate: Configuration → External Services
 
