@@ -108,26 +108,31 @@ services:
       OMNI_SYNC_MODE: ${OMNI_SYNC_MODE:-manual}
       OMNI_SYNC_INTERVAL_HOURS: ${OMNI_SYNC_INTERVAL_HOURS:-24}
       CATEGORY_ATTRIBUTES_JSON_PATH: /app/data/category_attributes.json
+      LLM_PROVIDER: ${LLM_PROVIDER:-lm_studio}
+      LM_STUDIO_BASE_URL: ${LM_STUDIO_BASE_URL:-http://host.docker.internal:11434}
+      LM_STUDIO_MODEL: ${LM_STUDIO_MODEL:-google/gemma-4-e4b}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./api/data:/app/data
       - ./api/logs:/app/logs
       - ./api/migrations:/app/migrations:ro
-      - ./api/services/omni_sync_service.py:/app/services/omni_sync_service.py:ro
-      - ./api/services/llm_service.py:/app/services/llm_service.py:ro
-      - ./api/middleware/rate_limit.py:/app/middleware/rate_limit.py:ro
-      - ./api/routers/admin_categories.py:/app/routers/admin_categories.py:ro
-      - ./api/routers/category.py:/app/routers/category.py:ro
-      - ./api/routers/generate.py:/app/routers/generate.py:ro
-      - ./api/models/__init__.py:/app/models/__init__.py:ro
     depends_on:
       llama-server:
-        condition: service_healthy
+        condition: service_started
       qdrant:
         condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 20s

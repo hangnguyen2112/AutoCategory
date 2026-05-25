@@ -497,6 +497,41 @@
   .btn-teal   { background: #0d9488; }
   .btn-gray   { background: var(--surface2); border:1px solid var(--border); color:var(--muted); }
 
+  /* ── Streaming pipeline card ── */
+  .stream-card { display:none; margin-top:8px; margin-bottom:16px; }
+  .stream-card.visible { display:block; }
+  .stream-step {
+    position:relative;
+    border-left:2px solid var(--border);
+    margin-left:16px;
+    padding:0 0 20px 24px;
+  }
+  .stream-step:last-child { padding-bottom:0; border-left-color:transparent; }
+  .stream-dot {
+    position:absolute; left:-9px; top:2px;
+    width:16px; height:16px; border-radius:50%;
+    background:var(--surface2); border:2px solid var(--border);
+    display:flex; align-items:center; justify-content:center;
+    font-size:.6rem; font-weight:700;
+  }
+  .stream-dot.active  { background:var(--accent);  border-color:var(--accent);  animation:pulse 1s infinite; }
+  .stream-dot.done    { background:var(--green);   border-color:var(--green); }
+  .stream-dot.error   { background:var(--red);     border-color:var(--red); }
+  .stream-dot.waiting { background:var(--surface2);border-color:var(--border); opacity:.4; }
+  .stream-label {
+    font-size:.8rem; font-weight:700; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.04em; margin-bottom:6px;
+  }
+  .stream-label.active  { color:var(--accent); }
+  .stream-label.done    { color:var(--green); }
+  .stream-label.error   { color:var(--red); }
+  .stream-body  { font-size:.875rem; word-wrap:break-word; }
+  .attr-chip {
+    display:inline-block; background:var(--surface); border:1px solid var(--border);
+    border-radius:6px; padding:2px 8px; font-size:.75rem; color:var(--text); margin:2px;
+  }
+  .attr-chip strong { color:var(--accent2); }
+
   /* ── Generate result card ── */
   .gen-section { display:none; margin-top:4px; }
   .gen-section.visible { display:block; }
@@ -591,7 +626,7 @@
   <label>Giá (VNĐ)</label>
   <input id="inp-price" type="number" min="0" placeholder="VD: 12500000" />
 
-  <label>🔑 API Key <span style="color:var(--muted);font-weight:400;font-size:.73rem">(chỉ cần cho Phân loại)</span></label>
+  <label>🔑 API Key</label>
   <input id="inp-api-key" type="text" placeholder="sk_live_..." />
   <div style="font-size:.75rem;color:var(--muted);margin-top:3px">Lưu tự động vào browser storage</div>
 
@@ -620,24 +655,6 @@
     </div>
   </div>
 
-  <div class="mode-row">
-    <label class="toggle-wrap" for="chk-fast" style="margin:0">
-      <input type="checkbox" id="chk-fast" />
-      <span class="toggle-track"></span>
-      <span class="toggle-label">⚡ Fast mode</span>
-    </label>
-    <span class="toggle-hint">Bỏ qua LLM understand → nhanh hơn ~1–2s, độ chính xác thấp hơn</span>
-  </div>
-
-  <div class="mode-row">
-    <label class="toggle-wrap" for="chk-image" style="margin:0">
-      <input type="checkbox" id="chk-image" checked />
-      <span class="toggle-track"></span>
-      <span class="toggle-label">🖼️ Phân tích hình ảnh</span>
-    </label>
-    <span class="toggle-hint">Sử dụng vision model để phân tích sản phẩm từ ảnh (nếu có)</span>
-  </div>
-
   <div class="suggest-box" id="suggest-box">
     <div class="suggest-label">💡 LLM gợi ý tiêu đề</div>
     <div class="suggest-text" id="suggest-title"></div>
@@ -650,20 +667,18 @@
     </div>
   </div>
 
+  <div class="mode-row" style="margin-bottom:4px">
+    <label class="toggle-wrap" for="chk-full-mode" style="margin:0">
+      <input type="checkbox" id="chk-full-mode" />
+      <span class="toggle-track"></span>
+      <span class="toggle-label">✨ AI Đầy đủ</span>
+    </label>
+    <span class="toggle-hint">Bật: LLM thấy toàn bộ options → chính xác hơn, chậm hơn &middot; Tắt: Qdrant hybrid → nhanh</span>
+  </div>
+
   <div class="action-row">
-    <button class="btn" id="btn-classify" onclick="runClassify()">
-      <span id="btn-icon-classify">▶</span> Phân loại
-    </button>
-    <span class="action-sep"></span>
-    <span class="action-sep-label">AI Generate</span>
-    <button class="btn btn-green" id="btn-img" onclick="callGenerate('from-images')" title="AI đọc ảnh → sinh tiêu đề + danh mục + thuộc tính">
-      <span id="btn-icon-img">🖼️</span> Từ ảnh
-    </button>
-    <button class="btn btn-blue" id="btn-text" onclick="callGenerate('from-text')" title="Tiêu đề + mô tả → phân loại danh mục + thuộc tính">
-      <span id="btn-icon-text">📝</span> Từ text
-    </button>
-    <button class="btn btn-purple" id="btn-full" onclick="callGenerate('full')" title="Ảnh + tiêu đề + mô tả → phân tích đầy đủ">
-      <span id="btn-icon-full">✨</span> AI Đầy đủ
+    <button class="btn btn-teal" id="btn-stream" onclick="runStream()">
+      <span id="btn-icon-stream">🚀</span> <span id="btn-stream-label">Phân tích nhanh</span>
     </button>
   </div>
 </div>
@@ -706,6 +721,36 @@
     <div class="step-body" id="bodyFinal"></div>
   </div>
 
+</div>
+
+<!-- ── Streaming Pipeline ─────────────────────────────────── -->
+<div class="card stream-card" id="stream-card">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+    <h2 style="margin-bottom:0" id="stream-card-title">🚀 Phân tích nhanh</h2>
+    <span id="stream-overall-status" style="font-size:.8rem;color:var(--muted)"></span>
+    <button class="btn-sm" style="margin-left:auto" onclick="hideStreamCard()">✕ Đóng</button>
+  </div>
+
+  <!-- Step A: Image analysis -->
+  <div class="stream-step" id="ss-img">
+    <div class="stream-dot waiting" id="ssd-img">📷</div>
+    <div class="stream-label waiting" id="ssl-img">Phân tích ảnh</div>
+    <div class="stream-body" id="ssb-img"></div>
+  </div>
+
+  <!-- Step B: Classification -->
+  <div class="stream-step" id="ss-cat">
+    <div class="stream-dot waiting" id="ssd-cat">🏷️</div>
+    <div class="stream-label waiting" id="ssl-cat">Phân loại danh mục</div>
+    <div class="stream-body" id="ssb-cat"></div>
+  </div>
+
+  <!-- Step C: Attributes -->
+  <div class="stream-step" id="ss-attr">
+    <div class="stream-dot waiting" id="ssd-attr">📋</div>
+    <div class="stream-label waiting" id="ssl-attr">Tải thuộc tính</div>
+    <div class="stream-body" id="ssb-attr"></div>
+  </div>
 </div>
 
 <!-- ── AI Generate Result ─────────────────────────────────── -->
@@ -871,17 +916,11 @@ async function runClassify() {
   const title = document.getElementById('inp-title').value.trim();
   if (!title) { alert('Vui lòng nhập tiêu đề.'); return; }
 
-  const apiKey = document.getElementById('inp-api-key').value.trim();
-  if (!apiKey) { alert('Vui lòng nhập API Key.'); return; }
-  
-  // Save API key to localStorage
-  localStorage.setItem('test_api_key', apiKey);
-
   const description = document.getElementById('inp-desc').value.trim();
   const priceRaw = document.getElementById('inp-price').value;
   const price = priceRaw ? parseFloat(priceRaw) : null;
-  const fast = document.getElementById('chk-fast').checked;
-  const analyzeImage = document.getElementById('chk-image').checked;
+  const fast = false;
+  const analyzeImage = true;
 
   let image_urls = [];
   if (analyzeImage) {
@@ -898,11 +937,12 @@ async function runClassify() {
   ['1','2','3','5','6','Final'].forEach(id => { setStep(id, ''); setBody(id, ''); });
   hideSuggestion();
   hideGenResult();
+  hideStreamCard();
   hideFieldsCard();
   document.getElementById('tree-card').style.display = 'none';
 
-  const btn = document.getElementById('btn-classify');
-  const icon = document.getElementById('btn-icon-classify');
+  const btn = document.getElementById('btn-stream');
+  const icon = document.getElementById('btn-icon-stream');
   setAllBtns(true);
   icon.innerHTML = '<span class="spinner"></span>';
 
@@ -914,7 +954,6 @@ async function runClassify() {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        'X-API-Key': apiKey
       },
       body: JSON.stringify({ title, description, price, image_urls, fast }),
     });
@@ -1025,7 +1064,7 @@ async function runClassify() {
     setBody('1', `<div class="error-msg">${esc(String(err.message || err))}</div>`);
   } finally {
     setAllBtns(false);
-    icon.innerHTML = '▶';
+    icon.textContent = document.getElementById('chk-full-mode').checked ? '✨' : '🚀';
   }
 }
 
@@ -1055,7 +1094,7 @@ function applySuggestion() {
   document.getElementById('inp-title').value = lastSuggestion.title;
   document.getElementById('inp-desc').value = lastSuggestion.desc;
   hideSuggestion();
-  runClassify();
+  runStream();
 }
 
 function dismissSuggestion() {
@@ -1218,10 +1257,252 @@ function getImageUrls() {
   return [...uploadedDataUrls];
 }
 function setAllBtns(disabled) {
-  ['btn-classify','btn-img','btn-text','btn-full'].forEach(id => {
+  ['btn-stream'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.disabled = disabled;
   });
+}
+
+// Update button label when toggle changes
+document.addEventListener('DOMContentLoaded', () => {
+  const chk = document.getElementById('chk-full-mode');
+  if (chk) chk.addEventListener('change', () => {
+    const full = chk.checked;
+    document.getElementById('btn-stream-label').textContent = full ? 'AI Đầy đủ' : 'Phân tích nhanh';
+    document.getElementById('btn-stream').className = full ? 'btn btn-purple' : 'btn btn-teal';
+    document.getElementById('btn-icon-stream').textContent = full ? '✨' : '🚀';
+  });
+});
+
+// ── Hide/show stream card ─────────────────────────────────────────
+function hideStreamCard() {
+  const c = document.getElementById('stream-card');
+  c.classList.remove('visible'); c.style.display = 'none';
+}
+
+// ── SSE step helpers ──────────────────────────────────────────────
+function _ssState(stepId, state) {
+  const dot = document.getElementById('ssd-' + stepId);
+  const lbl = document.getElementById('ssl-' + stepId);
+  if (dot) dot.className = 'stream-dot ' + state;
+  if (lbl) lbl.className = 'stream-label ' + state;
+}
+function _ssBody(stepId, html) {
+  const el = document.getElementById('ssb-' + stepId);
+  if (el) el.innerHTML = html;
+}
+
+// ── Main streaming function ───────────────────────────────────────
+async function runStream() {
+  const title  = document.getElementById('inp-title').value.trim();
+  const desc   = document.getElementById('inp-desc').value.trim();
+  const pRaw   = document.getElementById('inp-price').value;
+  const price  = pRaw ? parseFloat(pRaw) : null;
+  const apiKey = document.getElementById('inp-api-key').value.trim();
+  if (!apiKey) { alert('Vui lòng nhập API Key.'); return; }
+  localStorage.setItem('test_api_key', apiKey);
+  const images = getImageUrls();
+
+  if (!title && !desc && images.length === 0) {
+    alert('Cần nhập tiêu đề, mô tả hoặc ảnh sản phẩm.');
+    return;
+  }
+
+  // Show stream card and reset all steps
+  const card = document.getElementById('stream-card');
+  card.style.display = 'block'; card.classList.add('visible');
+  document.getElementById('stream-card-title').textContent = isFull ? '✨ AI Đầy đủ' : '🚀 Phân tích nhanh';
+  document.getElementById('stream-overall-status').textContent = '';
+  ['img','cat','attr'].forEach(id => {
+    _ssState(id, 'waiting');
+    _ssBody(id, '');
+  });
+  document.getElementById('pipeline').classList.remove('visible');
+  hideGenResult(); hideFieldsCard(); hideSuggestion();
+  document.getElementById('tree-card').style.display = 'none';
+
+  setAllBtns(true);
+  const streamIcon = document.getElementById('btn-icon-stream');
+  streamIcon.innerHTML = '<span class="spinner"></span>';
+
+  // If no images, skip image step visually
+  if (images.length === 0) {
+    _ssState('img', 'done');
+    _ssBody('img', '<span style="color:var(--muted);font-size:.82rem">Không có ảnh – bỏ qua bước phân tích ảnh</span>');
+  }
+
+  let streamCategoryId = null;
+  let streamCategoryName = null;
+
+  try {
+    const resp = await fetch(`${API}/generate/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      body: JSON.stringify({ image_urls: images, title, description: desc, price, full: isFull }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+      throw new Error(err.detail || resp.statusText);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Parse SSE lines
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop(); // keep incomplete last chunk
+
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith('data:')) continue;
+        let evt;
+        try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
+
+        switch (evt.step) {
+
+          case 'analyzing_image':
+            _ssState('img', 'active');
+            _ssBody('img', `<span style="color:var(--muted);font-size:.82rem"><span class="spinner"></span> Đang phân tích ảnh…</span>`);
+            break;
+
+          case 'image_analysis': {
+            _ssState('img', 'done');
+            const da = evt.detected_attributes || {};
+            const chips = Object.entries(da)
+              .filter(([k,v]) => v && !Array.isArray(v) && typeof v !== 'object' && k !== 'extra')
+              .map(([k,v]) => `<span class="attr-chip"><strong>${esc(k)}:</strong> ${esc(String(v))}</span>`)
+              .join('');
+            const accs = (da.accessories || []);
+            const accHtml = accs.length ? `<div style="margin-top:4px">${accs.map(a=>`<span class="attr-chip">📦 ${esc(a)}</span>`).join('')}</div>` : '';
+            const ps = evt.price_suggestion;
+            const priceHtml = ps?.estimate ? `<div style="margin-top:4px;font-size:.78rem;color:var(--muted)">💰 Ước tính: <strong style="color:var(--accent2)">${Number(ps.estimate).toLocaleString('vi-VN')}đ</strong></div>` : '';
+            _ssBody('img', `
+              <div class="kv-grid" style="margin-bottom:6px">
+                <span class="kv-key">Tiêu đề</span>
+                <span class="kv-val" style="font-weight:600">${esc(evt.title || '–')}</span>
+                <span class="kv-key">Mô tả</span>
+                <span class="kv-val" style="color:var(--muted)">${esc((evt.description||'').substring(0,200))}${(evt.description||'').length>200?'…':''}</span>
+              </div>
+              <div style="margin-top:4px">${chips}</div>
+              ${accHtml}${priceHtml}
+              <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+                <button class="btn-apply-only" style="font-size:.78rem;padding:5px 12px"
+                  data-title="${esc(evt.title||'')}" data-desc="${esc(evt.description||'')}"
+                  onclick="applyStreamSuggestion(this)">✏️ Dùng tiêu đề & mô tả</button>
+              </div>`);
+            // Show suggestion box
+            if (evt.title || evt.description) showSuggestion(evt.title || title, evt.description || desc);
+            break;
+          }
+
+          case 'classifying':
+            _ssState('cat', 'active');
+            _ssBody('cat', `<span style="color:var(--muted);font-size:.82rem"><span class="spinner"></span> Đang phân loại…</span>`);
+            break;
+
+          case 'classification': {
+            _ssState('cat', 'done');
+            streamCategoryId   = evt.category_id;
+            streamCategoryName = evt.category_name;
+            const conf = evt.confidence != null ? Math.round(evt.confidence * 100) : null;
+            const cands = (evt.candidates || []);
+            const candHtml = cands.length ? `
+              <div style="margin-top:8px">
+                <div style="font-size:.75rem;color:var(--muted);margin-bottom:4px">Top candidates</div>
+                <div class="candidate-list">
+                  ${cands.slice(0,3).map((c,i) => {
+                    const isSel = c.category_id === evt.category_id;
+                    return `<div class="candidate ${isSel?'selected':''}">
+                      <span class="c-rank">#${i+1}</span>
+                      <div class="c-info"><div class="c-name">${esc(c.name)}</div><div class="c-path">${esc(c.path||'')}</div></div>
+                      <span class="c-score">${((c.similarity_score||0)*100).toFixed(1)}%</span>
+                    </div>`;
+                  }).join('')}
+                </div>
+              </div>` : '';
+            _ssBody('cat', `
+              <div class="gen-cat-card" style="margin:0">
+                <div class="gen-cat-header">
+                  <span>🏷️</span>
+                  <span class="gen-cat-name">${esc(evt.category_name || '–')}</span>
+                  ${conf != null ? `<span class="gen-cat-conf">${conf}%</span>` : ''}
+                </div>
+                ${evt.category_path ? `<div class="gen-cat-path">📂 ${esc(evt.category_path)}</div>` : ''}
+                <div style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                  ${evt.decision ? decisionTag(evt.decision) : ''}
+                  <span style="font-size:.72rem;color:var(--muted)">ID: ${evt.category_id}</span>
+                </div>
+                ${evt.llm_reason ? `<div style="margin-top:6px;font-size:.78rem;color:var(--muted);font-style:italic">&ldquo;${esc(evt.llm_reason)}&rdquo;</div>` : ''}
+              </div>
+              ${candHtml}`);
+            if (evt.category_id) highlightCategoryPath(evt.category_id);
+            break;
+          }
+
+          case 'loading_attributes':
+            _ssState('attr', 'active');
+            _ssBody('attr', `<span style="color:var(--muted);font-size:.82rem"><span class="spinner"></span> Đang tải thuộc tính…</span>`);
+            break;
+
+          case 'attributes': {
+            _ssState('attr', 'done');
+            const attrs = evt.attributes || [];
+            const selectedVals = evt.selected_values || {};
+            _ssBody('attr', attrs.length
+              ? `<span style="font-size:.82rem;color:var(--green)">✓ ${attrs.length} thuộc tính — xem bên dưới</span>`
+              : `<span style="font-size:.82rem;color:var(--muted)">Chưa có fields cho danh mục này</span>`);
+            if (attrs.length && streamCategoryId) {
+              showFieldsCard(streamCategoryId, streamCategoryName, attrs);
+              // Apply pre-selected values from backend embedding match
+              if (Object.keys(selectedVals).length > 0) {
+                applyFieldSuggestions(selectedVals);
+              } else {
+                // Fallback: call suggest-fields API
+                const t = (document.getElementById('inp-title')?.value || '').trim();
+                const d = (document.getElementById('inp-desc')?.value  || '').trim();
+                if (t || d) suggestAndFillFields(streamCategoryId, t, d);
+              }
+            }
+            break;
+          }
+
+          case 'done':
+            document.getElementById('stream-overall-status').textContent = '✓ Hoàn tất';
+            document.getElementById('stream-overall-status').style.color = 'var(--green)';
+            break;
+
+          case 'error':
+            const stageName = {'image_analysis':'phân tích ảnh','classification':'phân loại','attributes':'thuộc tính','input':'input'}[evt.stage] || evt.stage;
+            const stepMap   = {'image_analysis':'img','classification':'cat','attributes':'attr','input':'img'};
+            const sid = stepMap[evt.stage] || 'img';
+            _ssState(sid, 'error');
+            _ssBody(sid, `<div class="error-msg">${esc(evt.message || 'Lỗi không xác định')}</div>`);
+            break;
+        }
+      }
+    }
+  } catch (err) {
+    _ssState('img', 'error');
+    _ssBody('img', `<div class="error-msg">${esc(String(err.message || err))}</div>`);
+  } finally {
+    setAllBtns(false);
+    const isFull2 = document.getElementById('chk-full-mode').checked;
+    streamIcon.innerHTML = isFull2 ? '✨' : '🚀';
+  }
+}
+
+function applyStreamSuggestion(btn) {
+  const t = btn.getAttribute('data-title');
+  const d = btn.getAttribute('data-desc');
+  if (t) document.getElementById('inp-title').value = t;
+  if (d) document.getElementById('inp-desc').value = d;
 }
 
 // ── Hide/show gen-result and fields ──────────────────────────────
@@ -1237,13 +1518,16 @@ function hideFieldsCard() {
 
 // ── AI GENERATE ───────────────────────────────────────────────────
 const GEN_ICONS   = { 'from-images':'🖼️', 'from-text':'📝', 'full':'✨' };
-const GEN_BTN_IDS = { 'from-images':['btn-img','btn-icon-img'], 'from-text':['btn-text','btn-icon-text'], 'full':['btn-full','btn-icon-full'] };
+const GEN_BTN_IDS = { 'full':['btn-full','btn-icon-full'] };
 
 async function callGenerate(mode) {
   const title  = document.getElementById('inp-title').value.trim();
   const desc   = document.getElementById('inp-desc').value.trim();
   const pRaw   = document.getElementById('inp-price').value;
   const price  = pRaw ? parseFloat(pRaw) : null;
+  const apiKey = document.getElementById('inp-api-key').value.trim();
+  if (!apiKey) { alert('Vui lòng nhập API Key.'); return; }
+  localStorage.setItem('test_api_key', apiKey);
   const images = getImageUrls();
 
   if ((mode === 'from-images' || mode === 'full') && images.length === 0) {
@@ -1256,7 +1540,7 @@ async function callGenerate(mode) {
   }
 
   document.getElementById('pipeline').classList.remove('visible');
-  hideFieldsCard(); hideSuggestion();
+  hideFieldsCard(); hideSuggestion(); hideStreamCard();
 
   const [btnId, iconId] = GEN_BTN_IDS[mode];
   setAllBtns(true);
@@ -1279,7 +1563,7 @@ async function callGenerate(mode) {
   try {
     const resp = await fetch(`${API}${endpoint}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
       body: JSON.stringify(body),
     });
     if (!resp.ok) {
@@ -1653,9 +1937,6 @@ function clearFieldValues() {
 document.addEventListener('DOMContentLoaded', () => {
   const savedApiKey = localStorage.getItem('test_api_key');
   if (savedApiKey) document.getElementById('inp-api-key').value = savedApiKey;
-  document.getElementById('inp-title').addEventListener('keydown', e => {
-    if (e.key === 'Enter') runClassify();
-  });
   loadCategories().then(() => renderTree());
 });
 </script>

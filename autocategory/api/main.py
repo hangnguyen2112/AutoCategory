@@ -5,11 +5,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
+from runtime_config import runtime_config
 from routers import (
     admin, category, classify, auth, generate,
-    admin_logs, admin_training, admin_config, admin_categories, admin_system
+    admin_logs, admin_training, admin_config, admin_categories, admin_system, admin_llm
 )
-from database import engine, Base
+from database import engine, Base, SessionLocal
 from models import User, APIKey, RequestLog  # Import to register models
 from middleware import RequestLoggingMiddleware, RateLimitMiddleware
 import redis
@@ -42,6 +43,16 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Redis connection failed, rate limiting will be disabled: {e}")
         app.state.redis_client = None
     
+    # Load runtime config from DB (LLM provider, model, thinking, ...)
+    try:
+        db = SessionLocal()
+        runtime_config.load_from_db(db)
+        db.close()
+        logger.info("RuntimeConfig loaded: provider=%s, model=%s",
+                    runtime_config.llm_provider, runtime_config.lm_studio_model)
+    except Exception as e:
+        logger.warning(f"RuntimeConfig load failed, using defaults: {e}")
+
     yield
     
     # Cleanup on shutdown
@@ -79,6 +90,7 @@ app.include_router(admin_training.router, tags=["Admin - Training Data"])
 app.include_router(admin_config.router, tags=["Admin - Configuration"])
 app.include_router(admin_categories.router, tags=["Admin - Categories"])
 app.include_router(admin_system.router, tags=["Admin - System"])
+app.include_router(admin_llm.router, tags=["Admin - LLM Provider"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(classify.router, prefix="/api", tags=["Classify"])
 app.include_router(category.router, prefix="/api", tags=["Categories"])

@@ -53,9 +53,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         method = request.method
         endpoint = str(request.url.path)
         
-        # Skip logging for certain endpoints
+        # Skip logging for certain endpoints (including SSE streaming endpoints)
         skip_endpoints = ["/docs", "/redoc", "/openapi.json", "/api/health"]
-        if endpoint in skip_endpoints:
+        if endpoint in skip_endpoints or endpoint.endswith("/stream"):
             return await call_next(request)
         
         # Get request body (if JSON)
@@ -66,8 +66,14 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 if body_bytes:
                     request_body = body_bytes.decode('utf-8')
                     # Store body back for route handlers
-                    async def receive():
-                        return {"type": "http.request", "body": body_bytes}
+                    # Must return http.disconnect on 2nd call to avoid Starlette middleware crash
+                    _body_consumed = False
+                    async def receive(_consumed=None):
+                        nonlocal _body_consumed
+                        if not _body_consumed:
+                            _body_consumed = True
+                            return {"type": "http.request", "body": body_bytes, "more_body": False}
+                        return {"type": "http.disconnect"}
                     request._receive = receive
         except Exception as e:
             logger.warning(f"Could not read request body: {e}")

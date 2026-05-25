@@ -108,6 +108,73 @@ async def delete_collection() -> None:
     logger.info("Deleted collection: %s", settings.qdrant_collection)
 
 
+# ── Attribute Options collection ───────────────────────────────────────────────
+
+ATTR_COLLECTION = "attribute_options"
+
+
+async def ensure_attr_collection() -> None:
+    client = get_client()
+    exists = await client.collection_exists(ATTR_COLLECTION)
+    if not exists:
+        await client.create_collection(
+            collection_name=ATTR_COLLECTION,
+            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+        )
+        logger.info("Created Qdrant collection: %s", ATTR_COLLECTION)
+
+
+async def upsert_attribute_options(
+    options: list[dict[str, Any]],
+    vectors: list[list[float]],
+) -> int:
+    """
+    Upsert attribute option vectors.
+    Each option dict must have: field_key, field_id, option_value, option_label, category_id.
+    Point ID = uuid5 of "field_id:option_value" to allow idempotent upserts.
+    """
+    client = get_client()
+    await ensure_attr_collection()
+    points = [
+        PointStruct(
+            id=str(uuid.uuid5(uuid.NAMESPACE_OID, f"{o['field_id']}:{o['option_value']}")),
+            vector=vec,
+            payload=o,
+        )
+        for o, vec in zip(options, vectors)
+    ]
+    batch_size = 128
+    for i in range(0, len(points), batch_size):
+        await client.upsert(collection_name=ATTR_COLLECTION, points=points[i:i + batch_size], wait=True)
+    logger.info("Upserted %d attribute option vectors", len(points))
+    return len(points)
+
+
+async def search_attribute_options(
+    query_vector: list[float],
+    field_id: int,
+    top_k: int = 1,
+) -> list[dict[str, Any]]:
+    """Search options within a specific field by vector similarity."""
+    client = get_client()
+    results = await client.search(
+        collection_name=ATTR_COLLECTION,
+        query_vector=query_vector,
+        query_filter=Filter(
+            must=[FieldCondition(key="field_id", match=MatchValue(value=field_id))]
+        ),
+        limit=top_k,
+        with_payload=True,
+    )
+    return [{"score": round(r.score, 4), **r.payload} for r in results]
+
+
+async def delete_attr_collection() -> None:
+    client = get_client()
+    await client.delete_collection(ATTR_COLLECTION)
+    logger.info("Deleted collection: %s", ATTR_COLLECTION)
+
+
 class QdrantService:
     """Wrapper class for Qdrant operations"""
     

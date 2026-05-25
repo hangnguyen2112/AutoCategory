@@ -284,8 +284,9 @@ function RebuildModal({ onClose, onConfirm }) {
     setLoading(true)
     try {
       const result = await categoriesAPI.rebuildIndex()
-      const count = result.data?.categories_indexed ?? '?'
-      toast.success(`Rebuilt Qdrant index: ${count} categories indexed!`)
+      const catCount = result.data?.categories_indexed ?? '?'
+      const attrCount = result.data?.attributes_indexed ?? '?'
+      toast.success(`Rebuilt indexes: ${catCount} categories, ${attrCount} attribute options indexed!`)
       onConfirm()
       onClose()
     } catch (error) {

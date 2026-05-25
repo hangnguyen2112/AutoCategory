@@ -24,7 +24,7 @@ function ConfigModal({ config, onClose, onSaved }) {
 
     try {
       if (isEdit) {
-        await configAPI.update(config.id, formData)
+        await configAPI.update(config.key, formData)
         toast.success('Configuration updated!')
       } else {
         await configAPI.create(formData)
@@ -158,7 +158,7 @@ function DeleteModal({ config, onClose, onDeleted }) {
   const handleDelete = async () => {
     setLoading(true)
     try {
-      await configAPI.delete(config.id)
+      await configAPI.delete(config.key)
       toast.success('Configuration deleted!')
       onDeleted()
       onClose()
@@ -194,7 +194,7 @@ function DeleteModal({ config, onClose, onDeleted }) {
 function BulkUpdateModal({ selectedConfigs, onClose, onUpdated }) {
   const [updates, setUpdates] = useState(
     selectedConfigs.reduce((acc, config) => {
-      acc[config.id] = config.value
+      acc[config.key] = config.value
       return acc
     }, {})
   )
@@ -205,12 +205,12 @@ function BulkUpdateModal({ selectedConfigs, onClose, onUpdated }) {
     setLoading(true)
 
     try {
-      const updateData = Object.entries(updates).map(([id, value]) => ({
-        id: parseInt(id),
+      const updateData = Object.entries(updates).map(([key, value]) => ({
+        key,
         value,
       }))
       
-      await configAPI.bulkUpdate({ updates: updateData })
+      await configAPI.bulkUpdate({ configs: updateData })
       toast.success(`Updated ${updateData.length} configurations!`)
       onUpdated()
       onClose()
@@ -237,9 +237,9 @@ function BulkUpdateModal({ selectedConfigs, onClose, onUpdated }) {
               <input
                 type="text"
                 className="input w-full"
-                value={updates[config.id]}
+                value={updates[config.key]}
                 onChange={(e) =>
-                  setUpdates({ ...updates, [config.id]: e.target.value })
+                  setUpdates({ ...updates, [config.key]: e.target.value })
                 }
               />
             </div>

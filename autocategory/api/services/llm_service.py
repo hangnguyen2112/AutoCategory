@@ -12,16 +12,43 @@ from typing import Any
 import httpx
 
 from config import settings
+from runtime_config import runtime_config
 
 logger = logging.getLogger(__name__)
 
-_client = httpx.AsyncClient(base_url=settings.llama_base_url, timeout=180.0)
+# Cache httpx clients per base_url to avoid re-creating on every call
+_clients: dict[str, httpx.AsyncClient] = {}
+
+
+def get_llm_client() -> tuple[httpx.AsyncClient, str]:
+    """
+    Returns (client, model_name) based on current runtime_config.llm_provider.
+    Clients are cached by base_url so connections are reused.
+    """
+    if runtime_config.llm_provider == "lm_studio":
+        base_url = runtime_config.lm_studio_base_url
+        model = runtime_config.lm_studio_model
+    else:  # default: llama
+        base_url = runtime_config.llama_base_url
+        model = runtime_config.llama_model
+
+    if base_url not in _clients:
+        _clients[base_url] = httpx.AsyncClient(base_url=base_url, timeout=180.0)
+    return _clients[base_url], model
+
+
+def is_lm_studio() -> bool:
+    return runtime_config.llm_provider == "lm_studio"
+
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _extract_json(text: str) -> dict | None:
     """Trích JSON từ response text, bỏ qua markdown code fence nếu có."""
-    # Strip closed thinking blocks, then any unclosed ones (truncated at max_tokens)
+    # Strip Gemma 4 reasoning blocks: <|channel>thought ... <channel|>
+    text = re.sub(r"<\|channel>thought.*?<channel\|>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<\|channel>thought.*$", "", text, flags=re.DOTALL).strip()
+    # Strip generic <think>...</think> blocks (llama.cpp style)
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
     text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL).strip()
     try:
@@ -47,23 +74,74 @@ def _build_user_content(text: str, image_urls: list[str] | None) -> Any:
     return parts
 
 
-async def _chat(system: str, user_content: Any) -> str:
+async def _chat(system: str, user_content: Any, max_tokens: int = 512) -> str:
     """Gọi /v1/chat/completions (OpenAI-compat). user_content có thể là str hoặc list."""
+    client, model = get_llm_client()
+    # LM Studio thinking models dùng thêm ~600-900 tokens cho reasoning
+    # nên cần budget lớn hơn để không bị cắt giữa JSON
+    effective_max_tokens = max(max_tokens, 1800) if is_lm_studio() else max_tokens
     payload: dict[str, Any] = {
-        "model": settings.llama_model,
+        "model": model,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user_content},
         ],
         "stream": False,
         "temperature": 0.1,
-        "max_tokens": 512,
-        "chat_template_kwargs": {"thinking": False},
+        "max_tokens": effective_max_tokens,
     }
-    resp = await _client.post("/v1/chat/completions", json=payload)
-    resp.raise_for_status()
-    data = resp.json()
-    return data["choices"][0]["message"]["content"]
+    for attempt in range(2):
+        try:
+            resp = await client.post("/v1/chat/completions", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError) as exc:
+            if attempt == 1:
+                raise
+            logger.warning("LLM connection dropped, retrying with fresh client: %s", exc)
+            # Evict stale cached client so get_llm_client() creates a new one
+            stale_url = str(client.base_url).rstrip("/")
+            _clients.pop(stale_url, None)
+            client, new_model = get_llm_client()
+            payload["model"] = new_model
+    raise RuntimeError("unreachable")
+
+
+async def get_embeddings(texts: list[str]) -> list[list[float]] | None:
+    """Get embeddings via /v1/embeddings. Returns None if the endpoint is unavailable."""
+    if not texts:
+        return []
+    client, model = get_llm_client()
+    try:
+        resp = await client.post("/v1/embeddings", json={"model": model, "input": texts})
+        resp.raise_for_status()
+        items = sorted(resp.json()["data"], key=lambda x: x["index"])
+        return [item["embedding"] for item in items]
+    except Exception as exc:
+        logger.warning("get_embeddings failed (falling back to direct match): %s", exc)
+        return None
+
+
+async def post_completions_with_retry(payload: dict) -> dict:
+    """POST /v1/chat/completions with one automatic retry on stale-connection errors.
+    Returns the full response JSON dict. Exported for use by image_analyzer."""
+    client, model = get_llm_client()
+    payload.setdefault("model", model)
+    for attempt in range(2):
+        try:
+            resp = await client.post("/v1/chat/completions", json=payload)
+            resp.raise_for_status()
+            return resp.json()
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError) as exc:
+            if attempt == 1:
+                raise
+            logger.warning("LLM connection dropped, retrying with fresh client: %s", exc)
+            stale_url = str(client.base_url).rstrip("/")
+            _clients.pop(stale_url, None)
+            client, new_model = get_llm_client()
+            payload["model"] = new_model
+    raise RuntimeError("unreachable")
 
 
 # ── Product Understanding ───────────────────────────────────────────────────────
@@ -151,6 +229,105 @@ async def understand_product(
             "text_image_consistency": "text_only" if not image_urls else "unknown",
         }
     return result
+
+
+# ── Attribute Value Extraction ──────────────────────────────────────────────────
+
+SYSTEM_EXTRACT_ATTRS = """\
+Bạn là hệ thống trích xuất thông tin sản phẩm từ bài đăng bán hàng.
+
+Nhiệm vụ: Dựa vào tiêu đề và mô tả sản phẩm, hãy suy luận và điền giá trị cho từng thuộc tính được yêu cầu.
+
+Quy tắc:
+- Chỉ điền khi có bằng chứng rõ ràng trong text hoặc có thể suy luận hợp lý.
+- Giá trị là chuỗi ngắn gọn, tự nhiên (ví dụ: "Apple", "128GB", "Tím", "Đã sử dụng").
+- Nếu không xác định được: bỏ qua trường đó.
+- Trả về JSON: {"field_key": "raw_value", ...}
+- CHỈ JSON, không markdown, không giải thích."""
+
+
+SYSTEM_EXTRACT_DIRECT = """\
+Bạn là hệ thống điền thuộc tính sản phẩm cho sàn rao vặt.
+
+Nhiệm vụ: Dựa vào thông tin sản phẩm, chọn giá trị phù hợp nhất cho từng thuộc tính.
+
+Quy tắc:
+- Mỗi field có options: CHỈ được trả về đúng một trong các giá trị "value" đã liệt kê.
+- Field không có options: điền chuỗi ngắn gọn, tự nhiên.
+- Nếu không xác định được: bỏ qua trường đó.
+- Trả về JSON: {"field_key": "chosen_value", ...}
+- CHỈ JSON, không markdown, không giải thích."""
+
+
+async def extract_attribute_values(
+    title: str,
+    description: str,
+    fields: list[dict],  # list of {field_key, field_label}
+) -> dict[str, str]:
+    """
+    Dùng LLM để trích xuất raw values cho các attribute fields từ title/description.
+    Trả về {field_key: raw_value_string}.
+    Không cần match với options — bước đó do Qdrant xử lý sau.
+    """
+    if not fields:
+        return {}
+
+    field_lines = "\n".join(
+        f'- {f["field_key"]}: {f.get("field_label", f["field_key"])}'
+        for f in fields
+    )
+    user_text = f"Tiêu đề: {title}\nMô tả: {description}\n\nCác thuộc tính cần điền:\n{field_lines}"
+
+    try:
+        raw = await _chat(SYSTEM_EXTRACT_ATTRS, user_text, max_tokens=256)
+        result = _extract_json(raw)
+        if not result:
+            logger.warning("extract_attribute_values: non-JSON: %s", raw[:200])
+            return {}
+        return {k: str(v) for k, v in result.items() if v is not None and str(v).strip()}
+    except Exception:
+        logger.exception("extract_attribute_values failed")
+        return {}
+
+
+async def extract_attribute_values_direct(
+    title: str,
+    description: str,
+    fields: list[dict],  # list of {field_key, field_label, field_options?}
+) -> dict[str, str]:
+    """
+    Dùng LLM chọn trực tiếp từ options (cho fields có ít options ≤20).
+    Options được đưa vào prompt để LLM chọn đúng value.
+    """
+    if not fields:
+        return {}
+
+    lines = []
+    for f in fields:
+        opts = f.get("field_options") or []
+        if opts:
+            opts_str = ", ".join(
+                f'"{o["value"]}"' + (f' ({o["label"]})' if o.get("label") and o["label"] != o["value"] else '')
+                for o in opts
+            )
+            lines.append(f'- {f["field_key"]} "{f.get("field_label", "")}": chọn một trong [{opts_str}]')
+        else:
+            lines.append(f'- {f["field_key"]} "{f.get("field_label", "")}": điền tự do')
+
+    user_text = (
+        f"Tiêu đề: {title}\nMô tả: {description or '(không có)'}\n\n"
+        f"Các thuộc tính cần điền:\n" + "\n".join(lines)
+    )
+    try:
+        raw = await _chat(SYSTEM_EXTRACT_DIRECT, user_text, max_tokens=256)
+        result = _extract_json(raw)
+        if not result:
+            logger.warning("extract_attribute_values_direct: non-JSON: %s", raw[:200])
+            return {}
+        return {k: str(v) for k, v in result.items() if v is not None and str(v).strip()}
+    except Exception:
+        logger.exception("extract_attribute_values_direct failed")
+        return {}
 
 
 # ── Category Rerank ─────────────────────────────────────────────────────────────

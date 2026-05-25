@@ -69,5 +69,6 @@ class CategoryRebuildIndexRequest(BaseModel):
 class CategoryRebuildIndexResponse(BaseModel):
     success: bool
     categories_indexed: int
+    attributes_indexed: int = 0
     time_taken_seconds: float
     error_message: Optional[str] = None

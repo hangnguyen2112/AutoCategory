@@ -1,9 +1,12 @@
 FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
-# Install Python 3.12
-RUN apt-get update && apt-get install -y \
-    python3.12 python3.12-dev python3-pip \
-    curl tzdata \
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y software-properties-common tzdata curl \
+    && add-apt-repository ppa:deadsnakes/ppa -y \
+    && apt-get update && apt-get install -y \
+        python3.12 python3.12-dev \
+    && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 \
     && ln -sf python3.12 /usr/bin/python3 \
     && ln -sf python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*

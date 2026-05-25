@@ -9,6 +9,13 @@ class Settings(BaseSettings):
     llama_model: str = "gemma4-e4b"  # model name dùng trong API call
     protonx_api_key: str = ""
 
+    # LLM Provider: "llama" (llama.cpp server) hoặc "lm_studio" (LM Studio)
+    llm_provider: str = "llama"
+
+    # LM Studio (chạy trên host machine, port mặc định 11434)
+    lm_studio_base_url: str = "http://host.docker.internal:11434"
+    lm_studio_model: str = "google/gemma-4-e4b"
+
     # Vector DB
     qdrant_host: str = "qdrant"
     qdrant_port: int = 6333

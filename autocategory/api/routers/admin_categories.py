@@ -431,6 +431,43 @@ async def rebuild_qdrant_index(
         vectors = await embed_texts(texts) if texts else []
         indexed = await qs.upsert_categories(profiles, vectors) if profiles else 0
 
+        # ── Rebuild attribute options index ───────────────────────────────────
+        from models import CategoryField
+
+        if request.force:
+            try:
+                await qs.delete_attr_collection()
+            except Exception:
+                pass
+        await qs.ensure_attr_collection()
+
+        fields = db.query(CategoryField).all()
+        option_dicts: list[dict] = []
+        attr_texts: list[str] = []
+        for field in fields:
+            for opt in (field.field_options or []):
+                label = opt.get("label") or opt.get("value", "")
+                value = opt.get("value", "")
+                if not value:
+                    continue
+                embed_text = f"{field.field_label}: {label}" if label != value else label
+                option_dicts.append({
+                    "field_id": field.id,
+                    "field_key": field.field_key,
+                    "field_label": field.field_label,
+                    "category_id": field.category_id,
+                    "option_value": value,
+                    "option_label": label,
+                })
+                attr_texts.append(embed_text)
+
+        attr_vectors: list[list[float]] = []
+        batch_size = 256
+        for i in range(0, len(attr_texts), batch_size):
+            vecs = await embed_texts(attr_texts[i:i + batch_size])
+            attr_vectors.extend(vecs)
+        attrs_indexed = await qs.upsert_attribute_options(option_dicts, attr_vectors) if option_dicts else 0
+
         time_taken = time.time() - start_time
 
         # Log
@@ -448,24 +485,31 @@ async def rebuild_qdrant_index(
         return CategoryRebuildIndexResponse(
             success=True,
             categories_indexed=indexed,
+            attributes_indexed=attrs_indexed,
             time_taken_seconds=round(time_taken, 2)
         )
 
     except Exception as e:
-        sync_history = CategorySyncHistory(
-            source="rebuild_index",
-            sync_type="manual",
-            changes_detected=False,
-            success=False,
-            error_message=str(e),
-            synced_by=current_admin.id
-        )
-        db.add(sync_history)
-        db.commit()
+        import traceback
+        err_detail = traceback.format_exc()
+        logger.exception("rebuild_qdrant_index failed: %s", err_detail)
+        try:
+            sync_history = CategorySyncHistory(
+                source="rebuild_index",
+                sync_type="manual",
+                changes_detected=False,
+                success=False,
+                error_message=err_detail[:500],
+                synced_by=current_admin.id
+            )
+            db.add(sync_history)
+            db.commit()
+        except Exception:
+            pass
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Index rebuild failed: {str(e)}"
+            detail=f"Index rebuild failed: {repr(e)}\n{err_detail}"
         )
 
 

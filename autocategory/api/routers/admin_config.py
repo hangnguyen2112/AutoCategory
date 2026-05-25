@@ -16,6 +16,7 @@ from schemas.system_config import (
 )
 from schemas.auth import MessageResponse
 from dependencies import CurrentAdminUser
+from runtime_config import runtime_config
 
 router = APIRouter(prefix="/api/admin/config", tags=["Admin - Configuration"])
 
@@ -144,7 +145,11 @@ async def update_system_config(
     
     db.commit()
     db.refresh(config)
-    
+
+    # Sync llm.* changes into runtime_config immediately (no restart needed)
+    if key.startswith("llm.") and config.value:
+        runtime_config._data[key] = config.value
+
     return SystemConfigResponse.model_validate(config)
 
 
@@ -204,6 +209,13 @@ async def bulk_update_configs(
             errors.append(f"Configuration key '{key}' not found")
     
     db.commit()
+
+    # Sync llm.* changes into runtime_config immediately
+    for config_dict in bulk_data.configs:
+        k = config_dict.get("key", "")
+        v = config_dict.get("value")
+        if k.startswith("llm.") and v is not None:
+            runtime_config._data[k] = v
     
     message = f"Updated {updated_count} configurations"
     if errors:
