@@ -265,6 +265,8 @@ async def update_user(
     
     # Update fields
     update_data = user_update.model_dump(exclude_unset=True)
+    if "password" in update_data:
+        user.password_hash = hash_password(update_data.pop("password"))
     for field, value in update_data.items():
         setattr(user, field, value)
     
