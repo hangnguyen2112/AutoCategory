@@ -123,12 +123,15 @@ export default function SystemControl() {
     lm_studio_model: '',
     gemini_web_secure_1psid: '',
     gemini_web_secure_1psidts: '',
+    deepseek_api_key: '',
+    deepseek_model: 'deepseek-chat',
   })
   const [llmSaving, setLlmSaving] = useState(false)
   const [llmTesting, setLlmTesting] = useState(false)
   const [llmTestResult, setLlmTestResult] = useState(null)
   const [showPsid, setShowPsid] = useState(false)
   const [showPsidts, setShowPsidts] = useState(false)
+  const [showDeepseekKey, setShowDeepseekKey] = useState(false)
 
   const fetchData = async () => {
     try {
@@ -161,6 +164,8 @@ export default function SystemControl() {
         lm_studio_model: res.data.lm_studio_model || '',
         gemini_web_secure_1psid: res.data.gemini_web_secure_1psid || '',
         gemini_web_secure_1psidts: res.data.gemini_web_secure_1psidts || '',
+        deepseek_api_key: res.data.deepseek_api_key || '',
+        deepseek_model: res.data.deepseek_model || 'deepseek-chat',
       })
     } catch (err) {
       console.error('Failed to load LLM config', err)
@@ -178,6 +183,9 @@ export default function SystemControl() {
       } else if (llmForm.provider === 'gemini_web') {
         payload.gemini_web_secure_1psid = llmForm.gemini_web_secure_1psid
         payload.gemini_web_secure_1psidts = llmForm.gemini_web_secure_1psidts
+      } else if (llmForm.provider === 'deepseek') {
+        payload.deepseek_api_key = llmForm.deepseek_api_key
+        payload.deepseek_model = llmForm.deepseek_model
       }
       const res = await llmAPI.switchProvider(payload)
       setLlmConfig(res.data)
@@ -507,6 +515,7 @@ export default function SystemControl() {
                     { id: 'lm_studio', label: 'LM Studio', desc: 'Local (host)' },
                     { id: 'llama',     label: 'Llama.cpp',  desc: 'Docker service' },
                     { id: 'gemini_web', label: '✨ Gemini Web', desc: 'Cookie-based, free' },
+                    { id: 'deepseek', label: '🤖 DeepSeek', desc: 'API key' },
                   ].map((p) => (
                     <label
                       key={p.id}
@@ -602,6 +611,44 @@ export default function SystemControl() {
                         {showPsidts ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </button>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* DeepSeek fields */}
+              {llmForm.provider === 'deepseek' && (
+                <div className="space-y-4">
+                  <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 text-sm text-blue-800 dark:text-blue-200">
+                    Lấy API key tại <strong>platform.deepseek.com</strong> → API Keys
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Key</label>
+                    <div className="relative">
+                      <input
+                        type={showDeepseekKey ? 'text' : 'password'}
+                        value={llmForm.deepseek_api_key}
+                        onChange={(e) => setLlmForm((f) => ({ ...f, deepseek_api_key: e.target.value }))}
+                        placeholder="sk-..."
+                        className="input w-full pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowDeepseekKey((v) => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      >
+                        {showDeepseekKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Model</label>
+                    <input
+                      type="text"
+                      value={llmForm.deepseek_model}
+                      onChange={(e) => setLlmForm((f) => ({ ...f, deepseek_model: e.target.value }))}
+                      placeholder="deepseek-chat"
+                      className="input w-full"
+                    />
                   </div>
                 </div>
               )}

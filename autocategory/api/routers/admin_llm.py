@@ -35,16 +35,20 @@ class LLMConfig(BaseModel):
     lm_studio_model: str
     gemini_web_secure_1psid: str
     gemini_web_secure_1psidts: str
+    deepseek_api_key: str
+    deepseek_model: str
     active_base_url: str
     active_model: str
 
 
 class SwitchProviderRequest(BaseModel):
-    provider: Literal["llama", "lm_studio", "gemini_web"]
+    provider: Literal["llama", "lm_studio", "gemini_web", "deepseek"]
     lm_studio_base_url: str | None = None
     lm_studio_model: str | None = None
     gemini_web_secure_1psid: str | None = None
     gemini_web_secure_1psidts: str | None = None
+    deepseek_api_key: str | None = None
+    deepseek_model: str | None = None
 
 
 class TestResult(BaseModel):
@@ -69,6 +73,10 @@ async def get_llm_config(current_admin: CurrentAdminUser):
     elif rc.llm_provider == "gemini_web":
         active_url = "https://gemini.google.com"
         active_model = "gemini-web"
+    elif rc.llm_provider == "deepseek":
+        import os
+        active_url = os.getenv("DEEPSEEK_PROXY_URL", "http://deepseek-proxy:8002")
+        active_model = rc.deepseek_model
     else:
         active_url = rc.llama_base_url
         active_model = rc.llama_model
@@ -81,6 +89,8 @@ async def get_llm_config(current_admin: CurrentAdminUser):
         lm_studio_model=rc.lm_studio_model,
         gemini_web_secure_1psid=rc.gemini_web_secure_1psid,
         gemini_web_secure_1psidts=rc.gemini_web_secure_1psidts,
+        deepseek_api_key=rc.deepseek_api_key,
+        deepseek_model=rc.deepseek_model,
         active_base_url=active_url,
         active_model=active_model,
     )
@@ -117,6 +127,16 @@ async def switch_provider(req: SwitchProviderRequest, current_admin: CurrentAdmi
             # Push new cookies to gemini-proxy container immediately
             from services.gemini_web_service import configure as _configure_proxy
             await _configure_proxy(psid, psidts or "")
+
+        if req.deepseek_api_key is not None or req.deepseek_model is not None:
+            api_key = req.deepseek_api_key if req.deepseek_api_key is not None else rc.deepseek_api_key
+            model = req.deepseek_model if req.deepseek_model is not None else rc.deepseek_model
+            rc.set_deepseek_config(api_key, model, db, current_admin.id)
+            # Push new config to deepseek-proxy container immediately
+            import os
+            proxy_url = os.getenv("DEEPSEEK_PROXY_URL", "http://deepseek-proxy:8002")
+            async with httpx.AsyncClient(timeout=5.0) as _c:
+                await _c.post(f"{proxy_url}/configure", json={"api_key": api_key, "model": model})
 
     finally:
         db.close()
@@ -155,6 +175,43 @@ async def test_llm_provider(current_admin: CurrentAdminUser):
                 provider="gemini_web",
                 base_url="https://gemini.google.com",
                 model="gemini-web",
+                success=False,
+                latency_ms=latency_ms,
+                error=str(exc),
+            )
+
+    if runtime_config.llm_provider == "deepseek":
+        import os
+        base_url = os.getenv("DEEPSEEK_PROXY_URL", "http://deepseek-proxy:8002")
+        model = runtime_config.deepseek_model
+        payload: dict = {
+            "model": model,
+            "messages": [{"role": "user", "content": "Reply with one word: OK"}],
+            "max_tokens": 10,
+            "temperature": 0.0,
+        }
+        start = time.monotonic()
+        try:
+            async with httpx.AsyncClient(base_url=base_url, timeout=30.0) as client:
+                resp = await client.post("/v1/chat/completions", json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+                latency_ms = round((time.monotonic() - start) * 1000, 1)
+                return TestResult(
+                    provider="deepseek",
+                    base_url="https://api.deepseek.com",
+                    model=model,
+                    success=True,
+                    latency_ms=latency_ms,
+                    response_preview=content[:200],
+                )
+        except Exception as exc:
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+            return TestResult(
+                provider="deepseek",
+                base_url="https://api.deepseek.com",
+                model=model,
                 success=False,
                 latency_ms=latency_ms,
                 error=str(exc),

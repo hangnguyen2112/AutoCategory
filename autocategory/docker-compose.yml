@@ -112,6 +112,7 @@ services:
       LM_STUDIO_BASE_URL: ${LM_STUDIO_BASE_URL:-http://host.docker.internal:11434}
       LM_STUDIO_MODEL: ${LM_STUDIO_MODEL:-google/gemma-4-e4b}
       GEMINI_PROXY_URL: http://gemini-proxy:8001
+      DEEPSEEK_PROXY_URL: http://deepseek-proxy:8002
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -128,6 +129,8 @@ services:
       redis:
         condition: service_healthy
       gemini-proxy:
+        condition: service_healthy
+      deepseek-proxy:
         condition: service_healthy
     deploy:
       resources:
@@ -171,6 +174,23 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+
+  deepseek-proxy:
+    build:
+      context: ./deepseek-proxy
+      dockerfile: Dockerfile
+    container_name: autocategory_deepseek_proxy
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # Cloudflare Tunnel setup (run once, then stop)
   cf-setup:

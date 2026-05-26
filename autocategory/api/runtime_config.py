@@ -29,6 +29,8 @@ _DEFAULTS: dict[str, Any] = {
     "llm.llama_model":                 "gemma4-e4b",
     "llm.gemini_web_secure_1psid":     "",
     "llm.gemini_web_secure_1psidts":   "",
+    "llm.deepseek_api_key":            "",
+    "llm.deepseek_model":              "deepseek-chat",
 }
 
 
@@ -106,6 +108,14 @@ class RuntimeConfig:
     def gemini_web_secure_1psidts(self) -> str:
         return self._data.get("llm.gemini_web_secure_1psidts", "")
 
+    @property
+    def deepseek_api_key(self) -> str:
+        return self._data.get("llm.deepseek_api_key", "")
+
+    @property
+    def deepseek_model(self) -> str:
+        return self._data.get("llm.deepseek_model", "deepseek-chat")
+
     # ── Setters (cập nhật memory + DB) ────────────────────────────────────────
 
     def set_provider(self, value: str, db: Session, user_id: int | None = None) -> None:
@@ -131,6 +141,18 @@ class RuntimeConfig:
         self._data["llm.gemini_web_secure_1psidts"] = secure_1psidts
         self._save_to_db(db, "llm.gemini_web_secure_1psid", secure_1psid, user_id)
         self._save_to_db(db, "llm.gemini_web_secure_1psidts", secure_1psidts, user_id)
+
+    def set_deepseek_config(
+        self,
+        api_key: str,
+        model: str,
+        db: Session,
+        user_id: int | None = None,
+    ) -> None:
+        self._data["llm.deepseek_api_key"] = api_key
+        self._data["llm.deepseek_model"] = model
+        self._save_to_db(db, "llm.deepseek_api_key", api_key, user_id)
+        self._save_to_db(db, "llm.deepseek_model", model, user_id)
 
 
 # ── Singleton ──────────────────────────────────────────────────────────────────

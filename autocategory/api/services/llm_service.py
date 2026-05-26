@@ -25,9 +25,13 @@ def get_llm_client() -> tuple[httpx.AsyncClient, str]:
     Returns (client, model_name) based on current runtime_config.llm_provider.
     Clients are cached by base_url so connections are reused.
     """
+    import os
     if runtime_config.llm_provider == "lm_studio":
         base_url = runtime_config.lm_studio_base_url
         model = runtime_config.lm_studio_model
+    elif runtime_config.llm_provider == "deepseek":
+        base_url = os.getenv("DEEPSEEK_PROXY_URL", "http://deepseek-proxy:8002")
+        model = runtime_config.deepseek_model
     else:  # default: llama
         base_url = runtime_config.llama_base_url
         model = runtime_config.llama_model
