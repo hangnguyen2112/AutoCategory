@@ -687,6 +687,70 @@ Ví dụ tốt cho “Đồ điện tử”:
 điện thoại laptop máy tính bảng thiết bị đeo thông minh máy ảnh tivi linh kiện phụ kiện điện tử"""
 
 
+SYSTEM_BUYER_ADVICE = """Bạn là chuyên gia tư vấn mua đồ cũ tại Việt Nam (chợ rao vặt, Facebook Marketplace, Chợ Tốt).
+
+Nhiệm vụ: Phân tích bài đăng bán hàng và đưa ra tư vấn cho NGƯỜI MUA. Hãy xem ảnh nếu có.
+
+OUTPUT JSON (chỉ JSON, không markdown):
+{
+  "price_analysis": {
+    "verdict": "rẻ" | "hợp lý" | "hơi đắt" | "đắt" | "không rõ",
+    "market_range": "ví dụ: 3.5 – 4.5 triệu",
+    "reasoning": "giải thích ngắn gọn tại sao giá đó hợp lý hay không"
+  },
+  "inspection_checklist": [
+    "Điều cần kiểm tra/test khi xem hàng trực tiếp (vd: bật máy test màn hình, test loa, pin, camera...)"
+  ],
+  "red_flags": [
+    "Dấu hiệu đáng ngờ trong bài đăng hoặc ảnh cần cảnh giác (vd: ảnh không rõ, không cho test, giá quá rẻ...)"
+  ],
+  "transaction_tips": [
+    "Lời khuyên khi giao dịch (vd: gặp nơi đông người, thử máy trước khi thanh toán, tránh chuyển khoản trước...)"
+  ],
+  "overall": "Tóm tắt 1-2 câu: có nên mua không, điểm cần lưu ý nhất"
+}
+
+Quy tắc:
+- Thực tế, ngắn gọn, tiếng Việt tự nhiên
+- inspection_checklist: 4-8 điểm cụ thể theo loại sản phẩm
+- red_flags: chỉ liệt kê điều thực sự đáng lo, không bịa đặt
+- transaction_tips: 3-5 điểm
+- Nếu không có giá trong bài → price_analysis.verdict = "không rõ"
+- CHỈ JSON, không markdown, không giải thích ngoài"""
+
+
+async def buyer_advice(
+    title: str,
+    description: str = "",
+    price: float | None = None,
+    image_urls: list[str] | None = None,
+) -> dict[str, Any]:
+    """Tư vấn người mua: đánh giá giá, checklist kiểm tra hàng, red flags, tips giao dịch."""
+    parts = [f"Tiêu đề bài đăng: {title}"]
+    if description:
+        parts.append(f"Mô tả: {description}")
+    if price:
+        parts.append(f"Giá bán: {int(price):,}đ")
+    else:
+        parts.append("Giá bán: (không ghi)")
+
+    user_text = "\n".join(parts) + "\n\nHãy tư vấn cho người mua."
+    user_content = _build_user_content(user_text, image_urls)
+
+    raw = await _chat(SYSTEM_BUYER_ADVICE, user_content, max_tokens=1024)
+    result = _extract_json(raw)
+    if not result:
+        logger.warning("buyer_advice returned non-JSON: %s", raw[:300])
+        return {
+            "price_analysis": {"verdict": "không rõ", "market_range": "", "reasoning": ""},
+            "inspection_checklist": [],
+            "red_flags": [],
+            "transaction_tips": [],
+            "overall": raw[:300] if raw else "Không phân tích được.",
+        }
+    return result
+
+
 async def generate_category_description(
     category_name: str,
     category_path: str,

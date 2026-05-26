@@ -21,7 +21,7 @@ from database import get_db
 from dependencies import require_api_key
 from models import APIKey
 from services import attribute_selector, classifier, image_analyzer
-from services.llm_service import suggest_field_values, understand_product
+from services.llm_service import suggest_field_values, understand_product, buyer_advice
 from services.omni_sync_service import get_attributes_for_category
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,13 @@ class ValidateConsistencyRequest(BaseModel):
     title: str = Field(..., min_length=1)
     description: str = Field(default="")
     image_urls: list[str] = Field(..., min_length=1, max_length=5)
+
+
+class BuyerAdviceRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=500)
+    description: str = Field(default="", max_length=5000)
+    price: float | None = Field(default=None, ge=0)
+    image_urls: list[str] = Field(default_factory=list, max_length=5)
 
 
 class GenerateStreamRequest(BaseModel):
@@ -242,6 +249,24 @@ async def validate_consistency(req: ValidateConsistencyRequest):
         )
         return result
 
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/generate/buyer-advice", summary="Tư vấn người mua: giá, checklist kiểm tra, red flags")
+async def get_buyer_advice(req: BuyerAdviceRequest):
+    """
+    LLM đóng vai trợ lý mua hàng: đánh giá giá thị trường, danh sách cần kiểm tra khi xem hàng,
+    dấu hiệu cảnh báo, và tips giao dịch an toàn.
+    """
+    try:
+        result = await buyer_advice(
+            title=req.title,
+            description=req.description,
+            price=req.price,
+            image_urls=req.image_urls or None,
+        )
+        return {"status": "ok", "advice": result}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

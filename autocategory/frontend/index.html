@@ -584,6 +584,24 @@
   .fields-progress-spinner { width:16px; height:16px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; flex-shrink:0; }
   @keyframes spin { to { transform:rotate(360deg); } }
   .sync-needed-msg { color:var(--yellow); background:#f59e0b15; border:1px solid #f59e0b60; border-radius:8px; padding:12px; font-size:.83rem; line-height:1.6; }
+
+  /* ── Buyer advice card ── */
+  .advice-card { display:none; margin-top:8px; }
+  .advice-card.visible { display:block; }
+  .advice-section { margin-bottom:14px; }
+  .advice-section-title { font-size:.75rem; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-bottom:6px; }
+  .advice-verdict { display:inline-block; font-weight:700; font-size:.95rem; padding:3px 12px; border-radius:20px; margin-bottom:4px; }
+  .verdict-re  { background:#16a34a30; color:#4ade80; border:1px solid #16a34a60; }
+  .verdict-hop { background:#0ea5e930; color:#38bdf8; border:1px solid #0ea5e960; }
+  .verdict-dat { background:#ef444430; color:#f87171; border:1px solid #ef444460; }
+  .verdict-hdat { background:#f9731630; color:#fb923c; border:1px solid #f9731660; }
+  .verdict-? { background:var(--surface2); color:var(--muted); border:1px solid var(--border); }
+  .advice-list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:4px; }
+  .advice-list li { background:var(--surface2); border:1px solid var(--border); border-radius:7px; padding:6px 12px; font-size:.83rem; line-height:1.5; }
+  .advice-list li.red { border-color:#ef444460; background:#ef444410; }
+  .advice-overall { background:var(--surface2); border:1px solid var(--accent); border-radius:8px; padding:10px 14px; font-size:.88rem; line-height:1.6; color:var(--text); }
+  .advice-loading { display:none; align-items:center; gap:10px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:10px 14px; font-size:.82rem; color:var(--muted); }
+  .advice-loading.visible { display:flex; }
 </style>
 </head>
 <body>
@@ -679,6 +697,7 @@
     <button class="btn btn-purple" id="btn-stream" onclick="runStream()">
       <span id="btn-icon-stream">✨</span> <span id="btn-stream-label">AI Đầy đủ</span>
     </button>
+    <button class="btn" style="background:#b45309" onclick="runBuyerAdvice()" id="btn-advice">✋ Tư vấn mua</button>
   </div>
 </div>
 
@@ -775,6 +794,15 @@
   </div>
   <div id="fields-form-body"></div>
   <pre class="fields-json-out" id="fields-json-out"></pre>
+</div>
+
+<div class="card advice-card" id="advice-card">
+  <h2 style="margin-bottom:14px">🛡️ Tư vấn người mua</h2>
+  <div class="advice-loading" id="advice-loading">
+    <span class="fields-progress-spinner"></span>
+    <span>AI đang phân tích…</span>
+  </div>
+  <div id="advice-body"></div>
 </div>
 
 <div class="card" id="tree-card" style="display:none">
@@ -1255,7 +1283,7 @@ function getImageUrls() {
   return [...uploadedDataUrls];
 }
 function setAllBtns(disabled) {
-  ['btn-stream'].forEach(id => {
+  ['btn-stream', 'btn-advice'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.disabled = disabled;
   });
@@ -1319,6 +1347,8 @@ async function runStream() {
   document.getElementById('pipeline').classList.remove('visible');
   hideGenResult(); hideFieldsCard(); hideSuggestion();
   document.getElementById('tree-card').style.display = 'none';
+  const advCard = document.getElementById('advice-card');
+  if (advCard) { advCard.classList.remove('visible'); advCard.style.display = ''; }
 
   setAllBtns(true);
   const streamIcon = document.getElementById('btn-icon-stream');
@@ -1381,16 +1411,11 @@ async function runStream() {
             const conf = evt.confidence != null ? `<span style="font-size:.75rem;color:var(--muted)"> (độ tin cậy: ${Math.round(evt.confidence*100)}%)</span>` : '';
             _ssBody('img', `
               <div style="font-size:.75rem;color:var(--accent2);margin-bottom:6px">✨ Gợi ý từ nội dung${conf}</div>
-              <div class="kv-grid" style="margin-bottom:6px">
+              <div class="kv-grid">
                 <span class="kv-key">Tiêu đề</span>
                 <span class="kv-val" style="font-weight:600">${esc(evt.title || '–')}</span>
                 <span class="kv-key">Mô tả</span>
                 <span class="kv-val" style="color:var(--muted)">${esc((evt.description||'').substring(0,200))}${(evt.description||'').length>200?'…':''}</span>
-              </div>
-              <div style="margin-top:8px">
-                <button class="btn-apply-only" style="font-size:.78rem;padding:5px 12px"
-                  data-title="${esc(evt.title||'')}" data-desc="${esc(evt.description||'')}"
-                  onclick="applyStreamSuggestion(this)">✏️ Dùng tiêu đề &amp; mô tả</button>
               </div>`);
             if (evt.title || evt.description) showSuggestion(evt.title || title, evt.description || desc);
             break;
@@ -1415,12 +1440,7 @@ async function runStream() {
                 <span class="kv-val" style="color:var(--muted)">${esc((evt.description||'').substring(0,200))}${(evt.description||'').length>200?'…':''}</span>
               </div>
               <div style="margin-top:4px">${chips}</div>
-              ${accHtml}${priceHtml}
-              <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-                <button class="btn-apply-only" style="font-size:.78rem;padding:5px 12px"
-                  data-title="${esc(evt.title||'')}" data-desc="${esc(evt.description||'')}"
-                  onclick="applyStreamSuggestion(this)">✏️ Dùng tiêu đề & mô tả</button>
-              </div>`);
+              ${accHtml}${priceHtml}`);
             // Show suggestion box
             if (evt.title || evt.description) showSuggestion(evt.title || title, evt.description || desc);
             break;
@@ -1529,6 +1549,79 @@ function applyStreamSuggestion(btn) {
   const d = btn.getAttribute('data-desc');
   if (t) document.getElementById('inp-title').value = t;
   if (d) document.getElementById('inp-desc').value = d;
+}
+
+async function runBuyerAdvice() {
+  const apiKey = document.getElementById('inp-api-key').value.trim();
+  if (!apiKey) { alert('Vui lòng nhập API Key.'); return; }
+  const title = (document.getElementById('inp-title')?.value || '').trim();
+  const desc  = (document.getElementById('inp-desc')?.value  || '').trim();
+  const price = parseFloat(document.getElementById('inp-price')?.value || '') || null;
+  const images = [
+    ...uploadedDataUrls,
+    ...(document.getElementById('inp-images')?.value || '').split(',').map(s => s.trim()).filter(Boolean),
+  ].slice(0, 5);
+
+  if (!title && !desc && images.length === 0) {
+    alert('Nhập tiêu đề, mô tả hoặc thêm ảnh trước.');
+    return;
+  }
+  if (!title) {
+    alert('Cần ít nhất tiêu đề sản phẩm.');
+    return;
+  }
+
+  const card    = document.getElementById('advice-card');
+  const loading = document.getElementById('advice-loading');
+  const body    = document.getElementById('advice-body');
+
+  card.classList.add('visible');
+  loading.classList.add('visible');
+  body.innerHTML = '';
+  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setAllBtns(true);
+
+  try {
+    const resp = await fetch(`${API}/generate/buyer-advice`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      body: JSON.stringify({ title, description: desc, price, image_urls: images }),
+    });
+    if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.detail || resp.statusText); }
+    const data = await resp.json();
+    const a = data.advice || {};
+
+    const verdictMap = {
+      'rẻ': 'verdict-re', 'hợp lý': 'verdict-hop',
+      'hơi đắt': 'verdict-hdat', 'đắt': 'verdict-dat',
+    };
+    const pa = a.price_analysis || {};
+    const vClass = verdictMap[pa.verdict] || 'verdict-?';
+    const verdictHtml = `<div class="advice-section">
+      <div class="advice-section-title">💰 Đánh giá giá</div>
+      <span class="advice-verdict ${vClass}">${esc(pa.verdict || 'không rõ')}</span>
+      ${pa.market_range ? `<span style="font-size:.82rem;color:var(--muted);margin-left:8px">Giá thị trường: <strong>${esc(pa.market_range)}</strong></span>` : ''}
+      ${pa.reasoning ? `<div style="margin-top:6px;font-size:.82rem;color:var(--muted)">${esc(pa.reasoning)}</div>` : ''}
+    </div>`;
+
+    const listHtml = (items, icon, itemClass='') =>
+      items && items.length
+        ? `<ul class="advice-list">${items.map(i => `<li class="${itemClass}">${icon} ${esc(i)}</li>`).join('')}</ul>`
+        : `<div style="font-size:.82rem;color:var(--muted)">Không có.</div>`;
+
+    body.innerHTML = [
+      verdictHtml,
+      `<div class="advice-section"><div class="advice-section-title">✅ Checklist kiểm tra hàng</div>${listHtml(a.inspection_checklist,'')}</div>`,
+      `<div class="advice-section"><div class="advice-section-title">⚠️ Dấu hiệu cảnh báo</div>${listHtml(a.red_flags,'🔴','red')}</div>`,
+      `<div class="advice-section"><div class="advice-section-title">🤝 Tips giao dịch</div>${listHtml(a.transaction_tips,'')}</div>`,
+      a.overall ? `<div class="advice-section"><div class="advice-section-title">📌 Tóm tắt</div><div class="advice-overall">${esc(a.overall)}</div></div>` : '',
+    ].join('');
+  } catch(err) {
+    body.innerHTML = `<div class="error-msg">${esc(String(err.message || err))}</div>`;
+  } finally {
+    loading.classList.remove('visible');
+    setAllBtns(false);
+  }
 }
 
 // ── Hide/show gen-result and fields ──────────────────────────────
