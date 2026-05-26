@@ -661,15 +661,14 @@
     <div class="suggest-label" style="margin-top:12px">📝 LLM gợi ý mô tả</div>
     <div class="suggest-text" id="suggest-desc"></div>
     <div class="suggest-actions">
-      <button class="btn-apply-only" onclick="applySuggestionOnly()">✏️ Chỉ dùng gợi ý</button>
-      <button class="btn-apply" onclick="applySuggestion()">✅ Dùng &amp; phân loại lại</button>
+      <button class="btn-apply-only" onclick="applySuggestionOnly()">✏️ Dùng gợi ý</button>
       <button class="btn-dismiss" onclick="dismissSuggestion()">✖ Bỏ qua</button>
     </div>
   </div>
 
   <div class="mode-row" style="margin-bottom:4px">
     <label class="toggle-wrap" for="chk-full-mode" style="margin:0">
-      <input type="checkbox" id="chk-full-mode" />
+      <input type="checkbox" id="chk-full-mode" checked />
       <span class="toggle-track"></span>
       <span class="toggle-label">✨ AI Đầy đủ</span>
     </label>
@@ -677,8 +676,8 @@
   </div>
 
   <div class="action-row">
-    <button class="btn btn-teal" id="btn-stream" onclick="runStream()">
-      <span id="btn-icon-stream">🚀</span> <span id="btn-stream-label">Phân tích nhanh</span>
+    <button class="btn btn-purple" id="btn-stream" onclick="runStream()">
+      <span id="btn-icon-stream">✨</span> <span id="btn-stream-label">AI Đầy đủ</span>
     </button>
   </div>
 </div>
@@ -775,10 +774,6 @@
     <span id="fields-progress-text">AI đang phân tích thuộc tính...</span>
   </div>
   <div id="fields-form-body"></div>
-  <div class="fields-actions" id="fields-actions" style="display:none">
-    <button class="btn btn-primary" id="fields-ai-suggest-btn" onclick="onAiSuggestClick()">🤖 AI Gợi ý</button>
-    <button class="btn-sm" style="padding:6px 12px" onclick="clearFieldValues()">🗑️ Xóa giá trị</button>
-  </div>
   <pre class="fields-json-out" id="fields-json-out"></pre>
 </div>
 
@@ -1064,7 +1059,10 @@ async function runClassify() {
     setBody('1', `<div class="error-msg">${esc(String(err.message || err))}</div>`);
   } finally {
     setAllBtns(false);
-    icon.textContent = document.getElementById('chk-full-mode').checked ? '✨' : '🚀';
+    const _full = document.getElementById('chk-full-mode').checked;
+    icon.textContent = _full ? '✨' : '🚀';
+    document.getElementById('btn-stream-label').textContent = _full ? 'AI Đầy đủ' : 'Phân tích nhanh';
+    document.getElementById('btn-stream').className = _full ? 'btn btn-purple' : 'btn btn-teal';
   }
 }
 
@@ -1294,6 +1292,7 @@ function _ssBody(stepId, html) {
 
 // ── Main streaming function ───────────────────────────────────────
 async function runStream() {
+  const isFull = document.getElementById('chk-full-mode')?.checked ?? false;
   const title  = document.getElementById('inp-title').value.trim();
   const desc   = document.getElementById('inp-desc').value.trim();
   const pRaw   = document.getElementById('inp-price').value;
@@ -1325,10 +1324,10 @@ async function runStream() {
   const streamIcon = document.getElementById('btn-icon-stream');
   streamIcon.innerHTML = '<span class="spinner"></span>';
 
-  // If no images, skip image step visually
+  // If no images, show pending state – backend will send text_analysis events
   if (images.length === 0) {
-    _ssState('img', 'done');
-    _ssBody('img', '<span style="color:var(--muted);font-size:.82rem">Không có ảnh – bỏ qua bước phân tích ảnh</span>');
+    _ssState('img', 'pending');
+    _ssBody('img', '<span style="color:var(--muted);font-size:.82rem">Chờ phân tích nội dung…</span>');
   }
 
   let streamCategoryId = null;
@@ -1371,6 +1370,31 @@ async function runStream() {
             _ssState('img', 'active');
             _ssBody('img', `<span style="color:var(--muted);font-size:.82rem"><span class="spinner"></span> Đang phân tích ảnh…</span>`);
             break;
+
+          case 'analyzing_text':
+            _ssState('img', 'active');
+            _ssBody('img', `<span style="color:var(--muted);font-size:.82rem"><span class="spinner"></span> Đang phân tích nội dung để gợi ý tiêu đề và mô tả…</span>`);
+            break;
+
+          case 'text_analysis': {
+            _ssState('img', 'done');
+            const conf = evt.confidence != null ? `<span style="font-size:.75rem;color:var(--muted)"> (độ tin cậy: ${Math.round(evt.confidence*100)}%)</span>` : '';
+            _ssBody('img', `
+              <div style="font-size:.75rem;color:var(--accent2);margin-bottom:6px">✨ Gợi ý từ nội dung${conf}</div>
+              <div class="kv-grid" style="margin-bottom:6px">
+                <span class="kv-key">Tiêu đề</span>
+                <span class="kv-val" style="font-weight:600">${esc(evt.title || '–')}</span>
+                <span class="kv-key">Mô tả</span>
+                <span class="kv-val" style="color:var(--muted)">${esc((evt.description||'').substring(0,200))}${(evt.description||'').length>200?'…':''}</span>
+              </div>
+              <div style="margin-top:8px">
+                <button class="btn-apply-only" style="font-size:.78rem;padding:5px 12px"
+                  data-title="${esc(evt.title||'')}" data-desc="${esc(evt.description||'')}"
+                  onclick="applyStreamSuggestion(this)">✏️ Dùng tiêu đề &amp; mô tả</button>
+              </div>`);
+            if (evt.title || evt.description) showSuggestion(evt.title || title, evt.description || desc);
+            break;
+          }
 
           case 'image_analysis': {
             _ssState('img', 'done');
@@ -1479,8 +1503,8 @@ async function runStream() {
             break;
 
           case 'error':
-            const stageName = {'image_analysis':'phân tích ảnh','classification':'phân loại','attributes':'thuộc tính','input':'input'}[evt.stage] || evt.stage;
-            const stepMap   = {'image_analysis':'img','classification':'cat','attributes':'attr','input':'img'};
+            const stageName = {'image_analysis':'phân tích ảnh','text_analysis':'phân tích text','classification':'phân loại','attributes':'thuộc tính','input':'input'}[evt.stage] || evt.stage;
+            const stepMap   = {'image_analysis':'img','text_analysis':'img','classification':'cat','attributes':'attr','input':'img'};
             const sid = stepMap[evt.stage] || 'img';
             _ssState(sid, 'error');
             _ssBody(sid, `<div class="error-msg">${esc(evt.message || 'Lỗi không xác định')}</div>`);
@@ -1495,6 +1519,8 @@ async function runStream() {
     setAllBtns(false);
     const isFull2 = document.getElementById('chk-full-mode').checked;
     streamIcon.innerHTML = isFull2 ? '✨' : '🚀';
+    document.getElementById('btn-stream-label').textContent = isFull2 ? 'AI Đầy đủ' : 'Phân tích nhanh';
+    document.getElementById('btn-stream').className = isFull2 ? 'btn btn-purple' : 'btn btn-teal';
   }
 }
 
@@ -1720,10 +1746,8 @@ async function loadAndShowFields(categoryId, categoryName) {
 }
 
 async function suggestAndFillFields(categoryId, title, description) {
-  const suggestBtn = document.getElementById('fields-ai-suggest-btn');
   const progressEl = document.getElementById('fields-progress');
   const progressText = document.getElementById('fields-progress-text');
-  if (suggestBtn) { suggestBtn.disabled = true; suggestBtn.textContent = '⏳ Đang gợi ý...'; }
   if (progressEl) { progressEl.classList.add('visible'); }
   if (progressText) { progressText.textContent = 'AI đang phân tích thuộc tính và gợi ý giá trị...'; }
   try {
@@ -1736,11 +1760,9 @@ async function suggestAndFillFields(categoryId, title, description) {
     const data = await resp.json();
     console.log('[suggest-fields] suggestions:', data.suggestions);
     applyFieldSuggestions(data.suggestions || {});
-    if (suggestBtn) { suggestBtn.textContent = '✓ Đã gợi ý'; }
     if (progressEl) { progressEl.classList.remove('visible'); }
   } catch (e) {
     console.warn('suggest-fields failed:', e);
-    if (suggestBtn) { suggestBtn.disabled = false; suggestBtn.textContent = '🤖 AI Gợi ý'; }
     if (progressEl) { progressEl.classList.remove('visible'); }
   }
 }
@@ -1811,16 +1833,13 @@ function showFieldsCard(categoryId, categoryName, fields) {
   document.getElementById('fields-cat-badge').textContent = categoryName || `ID ${categoryId}`;
   document.getElementById('fields-json-out').classList.remove('visible');
   const syncHint  = document.getElementById('fields-sync-hint');
-  const actionsEl = document.getElementById('fields-actions');
   const body      = document.getElementById('fields-form-body');
   if (currentFields.length === 0) {
     syncHint.style.display = 'inline-block';
-    actionsEl.style.display = 'none';
     body.innerHTML = `<div class="sync-needed-msg">⚠️ Chưa có fields cho danh mục này. Vào <strong>Admin Dashboard → Danh mục → Sync từ Omni</strong> để đồng bộ thuộc tính trước.</div>`;
     return;
   }
   syncHint.style.display = 'none';
-  actionsEl.style.display = 'flex';
   body.innerHTML = buildFieldsForm(currentFields);
 }
 

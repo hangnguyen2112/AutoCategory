@@ -27,6 +27,9 @@ email-validator==2.1.0
 redis==5.2.0
 hiredis==3.0.0
 
+# Gemini Web is handled by the gemini-proxy sidecar container (see autocategory/gemini-proxy/)
+# — NOT imported here to avoid dependency conflicts with torch/sentence-transformers.
+
 # Utilities
 python-dotenv==1.0.1
 psutil==6.1.0  # System monitoring

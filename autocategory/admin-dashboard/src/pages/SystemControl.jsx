@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { systemAPI } from '../services/api'
+import { systemAPI, llmAPI } from '../services/api'
 import {
   Server,
   Activity,
@@ -10,6 +10,11 @@ import {
   Database,
   HardDrive,
   Trash2,
+  Cpu,
+  CheckCircle,
+  XCircle,
+  Eye,
+  EyeOff,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -110,6 +115,21 @@ export default function SystemControl() {
   const [loading, setLoading] = useState(true)
   const [autoRefresh, setAutoRefresh] = useState(true)
 
+  // LLM Provider state
+  const [llmConfig, setLlmConfig] = useState(null)
+  const [llmForm, setLlmForm] = useState({
+    provider: 'lm_studio',
+    lm_studio_base_url: '',
+    lm_studio_model: '',
+    gemini_web_secure_1psid: '',
+    gemini_web_secure_1psidts: '',
+  })
+  const [llmSaving, setLlmSaving] = useState(false)
+  const [llmTesting, setLlmTesting] = useState(false)
+  const [llmTestResult, setLlmTestResult] = useState(null)
+  const [showPsid, setShowPsid] = useState(false)
+  const [showPsidts, setShowPsidts] = useState(false)
+
   const fetchData = async () => {
     try {
       setLoading(true)
@@ -131,6 +151,57 @@ export default function SystemControl() {
     }
   }
 
+  const fetchLlmConfig = async () => {
+    try {
+      const res = await llmAPI.getConfig()
+      setLlmConfig(res.data)
+      setLlmForm({
+        provider: res.data.provider,
+        lm_studio_base_url: res.data.lm_studio_base_url || '',
+        lm_studio_model: res.data.lm_studio_model || '',
+        gemini_web_secure_1psid: res.data.gemini_web_secure_1psid || '',
+        gemini_web_secure_1psidts: res.data.gemini_web_secure_1psidts || '',
+      })
+    } catch (err) {
+      console.error('Failed to load LLM config', err)
+    }
+  }
+
+  const handleLlmSave = async () => {
+    setLlmSaving(true)
+    setLlmTestResult(null)
+    try {
+      const payload = { provider: llmForm.provider }
+      if (llmForm.provider === 'lm_studio') {
+        payload.lm_studio_base_url = llmForm.lm_studio_base_url
+        payload.lm_studio_model = llmForm.lm_studio_model
+      } else if (llmForm.provider === 'gemini_web') {
+        payload.gemini_web_secure_1psid = llmForm.gemini_web_secure_1psid
+        payload.gemini_web_secure_1psidts = llmForm.gemini_web_secure_1psidts
+      }
+      const res = await llmAPI.switchProvider(payload)
+      setLlmConfig(res.data)
+      toast.success('LLM provider cập nhật thành công!')
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Lưu thất bại')
+    } finally {
+      setLlmSaving(false)
+    }
+  }
+
+  const handleLlmTest = async () => {
+    setLlmTesting(true)
+    setLlmTestResult(null)
+    try {
+      const res = await llmAPI.test()
+      setLlmTestResult(res.data)
+    } catch (err) {
+      setLlmTestResult({ success: false, error: err.response?.data?.detail || String(err) })
+    } finally {
+      setLlmTesting(false)
+    }
+  }
+
   const fetchLogs = async () => {
     try {
       const response = await systemAPI.logs({ lines: 50 })
@@ -143,6 +214,7 @@ export default function SystemControl() {
   useEffect(() => {
     fetchData()
     fetchLogs()
+    fetchLlmConfig()
   }, [])
 
   useEffect(() => {
@@ -417,6 +489,187 @@ export default function SystemControl() {
               </div>
             </div>
           )}
+
+          {/* LLM Provider */}
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+              <Cpu className="h-5 w-5" />
+              LLM Provider
+            </h2>
+            <div className="card space-y-5">
+              {/* Provider selector */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Provider
+                </label>
+                <div className="flex flex-wrap gap-3">
+                  {[
+                    { id: 'lm_studio', label: 'LM Studio', desc: 'Local (host)' },
+                    { id: 'llama',     label: 'Llama.cpp',  desc: 'Docker service' },
+                    { id: 'gemini_web', label: '✨ Gemini Web', desc: 'Cookie-based, free' },
+                  ].map((p) => (
+                    <label
+                      key={p.id}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 cursor-pointer transition-colors ${
+                        llmForm.provider === p.id
+                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30'
+                          : 'border-gray-200 dark:border-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="llm_provider"
+                        value={p.id}
+                        checked={llmForm.provider === p.id}
+                        onChange={(e) => setLlmForm((f) => ({ ...f, provider: e.target.value }))}
+                        className="hidden"
+                      />
+                      <div>
+                        <div className="font-medium text-sm text-gray-900 dark:text-white">{p.label}</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">{p.desc}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* LM Studio fields */}
+              {llmForm.provider === 'lm_studio' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Base URL</label>
+                    <input
+                      type="text"
+                      value={llmForm.lm_studio_base_url}
+                      onChange={(e) => setLlmForm((f) => ({ ...f, lm_studio_base_url: e.target.value }))}
+                      placeholder="http://host.docker.internal:11434"
+                      className="input w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Model name</label>
+                    <input
+                      type="text"
+                      value={llmForm.lm_studio_model}
+                      onChange={(e) => setLlmForm((f) => ({ ...f, lm_studio_model: e.target.value }))}
+                      placeholder="google/gemma-4-e4b"
+                      className="input w-full"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Gemini Web fields */}
+              {llmForm.provider === 'gemini_web' && (
+                <div className="space-y-4">
+                  <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 text-sm text-amber-800 dark:text-amber-200">
+                    Cookie lấy từ <strong>gemini.google.com</strong>: F12 → Network → Any request → Headers → Copy <code>__Secure-1PSID</code> và <code>__Secure-1PSIDTS</code>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">__Secure-1PSID</label>
+                    <div className="relative">
+                      <input
+                        type={showPsid ? 'text' : 'password'}
+                        value={llmForm.gemini_web_secure_1psid}
+                        onChange={(e) => setLlmForm((f) => ({ ...f, gemini_web_secure_1psid: e.target.value }))}
+                        placeholder="Paste cookie value..."
+                        className="input w-full pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPsid((v) => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      >
+                        {showPsid ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">__Secure-1PSIDTS <span className="text-gray-400">(optional)</span></label>
+                    <div className="relative">
+                      <input
+                        type={showPsidts ? 'text' : 'password'}
+                        value={llmForm.gemini_web_secure_1psidts}
+                        onChange={(e) => setLlmForm((f) => ({ ...f, gemini_web_secure_1psidts: e.target.value }))}
+                        placeholder="Paste cookie value..."
+                        className="input w-full pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPsidts((v) => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      >
+                        {showPsidts ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Buttons + status */}
+              <div className="flex flex-wrap items-center gap-3 pt-1">
+                <button
+                  onClick={handleLlmSave}
+                  disabled={llmSaving}
+                  className="btn btn-primary flex items-center gap-2"
+                >
+                  {llmSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
+                  {llmSaving ? 'Đang lưu...' : 'Lưu & Áp dụng'}
+                </button>
+                <button
+                  onClick={handleLlmTest}
+                  disabled={llmTesting || llmSaving}
+                  className="btn btn-secondary flex items-center gap-2"
+                >
+                  {llmTesting ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
+                  {llmTesting ? 'Đang test...' : 'Test kết nối'}
+                </button>
+                {llmConfig && (
+                  <span className="text-sm text-gray-500 dark:text-gray-400">
+                    Đang dùng: <strong className="text-gray-800 dark:text-gray-200">{llmConfig.provider}</strong>
+                    {llmConfig.provider !== 'gemini_web' && (
+                      <> — {llmConfig.active_model}</>
+                    )}
+                  </span>
+                )}
+              </div>
+
+              {/* Test result */}
+              {llmTestResult && (
+                <div
+                  className={`flex items-start gap-3 p-3 rounded-lg ${
+                    llmTestResult.success
+                      ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700'
+                      : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700'
+                  }`}
+                >
+                  {llmTestResult.success
+                    ? <CheckCircle className="h-5 w-5 text-green-600 mt-0.5 shrink-0" />
+                    : <XCircle className="h-5 w-5 text-red-600 mt-0.5 shrink-0" />}
+                  <div className="text-sm">
+                    {llmTestResult.success ? (
+                      <>
+                        <span className="font-medium text-green-800 dark:text-green-200">Kết nối thành công</span>
+                        {llmTestResult.latency_ms && (
+                          <span className="text-green-600 dark:text-green-400 ml-2">{llmTestResult.latency_ms}ms</span>
+                        )}
+                        {llmTestResult.response_preview && (
+                          <div className="text-green-700 dark:text-green-300 mt-1 font-mono text-xs">
+                            &quot;{llmTestResult.response_preview}&quot;
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-medium text-red-800 dark:text-red-200">Kết nối thất bại</span>
+                        <div className="text-red-700 dark:text-red-300 mt-1 text-xs">{llmTestResult.error}</div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
 
           {/* Recent Logs */}
           <div>

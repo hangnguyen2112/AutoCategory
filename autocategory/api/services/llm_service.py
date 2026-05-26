@@ -76,6 +76,21 @@ def _build_user_content(text: str, image_urls: list[str] | None) -> Any:
 
 async def _chat(system: str, user_content: Any, max_tokens: int = 512) -> str:
     """Gọi /v1/chat/completions (OpenAI-compat). user_content có thể là str hoặc list."""
+    # ── Gemini Web branch ───────────────────────────────────────────────────────
+    if runtime_config.llm_provider == "gemini_web":
+        from services.gemini_web_service import chat as _gemini_chat
+        # user_content có thể là str hoặc list (multipart)
+        # Với text-only: ghép system + user thành 1 prompt
+        if isinstance(user_content, str):
+            prompt = f"{system}\n\n{user_content}"
+            return await _gemini_chat(prompt)
+        # Multipart (có ảnh): extract text, ảnh xử lý riêng qua image_analyzer
+        text_parts = " ".join(
+            p["text"] for p in user_content if isinstance(p, dict) and p.get("type") == "text"
+        )
+        prompt = f"{system}\n\n{text_parts}"
+        return await _gemini_chat(prompt)
+    # ───────────────────────────────────────────────────────────────
     client, model = get_llm_client()
     # LM Studio thinking models dùng thêm ~600-900 tokens cho reasoning
     # nên cần budget lớn hơn để không bị cắt giữa JSON
@@ -125,7 +140,35 @@ async def get_embeddings(texts: list[str]) -> list[list[float]] | None:
 
 async def post_completions_with_retry(payload: dict) -> dict:
     """POST /v1/chat/completions with one automatic retry on stale-connection errors.
-    Returns the full response JSON dict. Exported for use by image_analyzer."""
+    Returns the full response JSON dict. Exported for use by image_analyzer.
+    For gemini_web: delegates to gemini_web_service (images downloaded as temp files)."""
+    if runtime_config.llm_provider == "gemini_web":
+        from services.gemini_web_service import chat as _gemini_chat
+        messages = payload.get("messages", [])
+        system_text = ""
+        user_text = ""
+        image_urls: list[str] = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_text = msg["content"] if isinstance(msg["content"], str) else ""
+            elif msg["role"] == "user":
+                content = msg["content"]
+                if isinstance(content, str):
+                    user_text = content
+                elif isinstance(content, list):
+                    for part in content:
+                        if part.get("type") == "text":
+                            user_text += part["text"]
+                        elif part.get("type") == "image_url":
+                            url = part.get("image_url", {}).get("url", "")
+                            if url:
+                                image_urls.append(url)
+        prompt = f"{system_text}\n\n{user_text}" if system_text else user_text
+        # Proxy tự download ảnh — chỉ cần gửi URLs
+        text = await _gemini_chat(prompt, image_urls=image_urls or None)
+        # Wrap result in OpenAI-compat shape so callers can use ["choices"][0]["message"]["content"]
+        return {"choices": [{"message": {"content": text}, "finish_reason": "stop"}]}
+
     client, model = get_llm_client()
     payload.setdefault("model", model)
     for attempt in range(2):

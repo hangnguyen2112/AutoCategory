@@ -22,11 +22,13 @@ logger = logging.getLogger(__name__)
 
 # ── Default values (dùng khi DB chưa có row) ──────────────────────────────────
 _DEFAULTS: dict[str, Any] = {
-    "llm.provider":            "lm_studio",
-    "llm.lm_studio_base_url":  "http://host.docker.internal:11434",
-    "llm.lm_studio_model":     "google/gemma-4-e4b",
-    "llm.llama_base_url":      "http://llama-server:8080",
-    "llm.llama_model":         "gemma4-e4b",
+    "llm.provider":                    "lm_studio",
+    "llm.lm_studio_base_url":          "http://host.docker.internal:11434",
+    "llm.lm_studio_model":             "google/gemma-4-e4b",
+    "llm.llama_base_url":              "http://llama-server:8080",
+    "llm.llama_model":                 "gemma4-e4b",
+    "llm.gemini_web_secure_1psid":     "",
+    "llm.gemini_web_secure_1psidts":   "",
 }
 
 
@@ -96,6 +98,14 @@ class RuntimeConfig:
     def llama_model(self) -> str:
         return self._data.get("llm.llama_model", "gemma4-e4b")
 
+    @property
+    def gemini_web_secure_1psid(self) -> str:
+        return self._data.get("llm.gemini_web_secure_1psid", "")
+
+    @property
+    def gemini_web_secure_1psidts(self) -> str:
+        return self._data.get("llm.gemini_web_secure_1psidts", "")
+
     # ── Setters (cập nhật memory + DB) ────────────────────────────────────────
 
     def set_provider(self, value: str, db: Session, user_id: int | None = None) -> None:
@@ -109,6 +119,18 @@ class RuntimeConfig:
     def set_lm_studio_model(self, value: str, db: Session, user_id: int | None = None) -> None:
         self._data["llm.lm_studio_model"] = value
         self._save_to_db(db, "llm.lm_studio_model", value, user_id)
+
+    def set_gemini_web_cookies(
+        self,
+        secure_1psid: str,
+        secure_1psidts: str,
+        db: Session,
+        user_id: int | None = None,
+    ) -> None:
+        self._data["llm.gemini_web_secure_1psid"] = secure_1psid
+        self._data["llm.gemini_web_secure_1psidts"] = secure_1psidts
+        self._save_to_db(db, "llm.gemini_web_secure_1psid", secure_1psid, user_id)
+        self._save_to_db(db, "llm.gemini_web_secure_1psidts", secure_1psidts, user_id)
 
 
 # ── Singleton ──────────────────────────────────────────────────────────────────

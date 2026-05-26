@@ -1,0 +1,6 @@
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+httpx==0.27.2
+python-multipart==0.0.20
+# Gemini Web (cookie-based) — isolated here to avoid conflicts with main api
+gemini-webapi>=2.0.0

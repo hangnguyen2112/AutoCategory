@@ -123,6 +123,14 @@ export const generateAPI = {
   validateConsistency: (data) => api.post('/generate/validate-consistency', data),
 }
 
+// LLM Provider API
+export const llmAPI = {
+  getConfig: () => api.get('/admin/llm/config'),
+  switchProvider: (data) => api.post('/admin/llm/switch', data),
+  test: () => api.post('/admin/llm/test'),
+  listModels: () => api.get('/admin/llm/models'),
+}
+
 // System Control API
 export const systemAPI = {
   health: () => api.get('/admin/system/health'),

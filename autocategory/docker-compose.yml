@@ -111,6 +111,7 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-lm_studio}
       LM_STUDIO_BASE_URL: ${LM_STUDIO_BASE_URL:-http://host.docker.internal:11434}
       LM_STUDIO_MODEL: ${LM_STUDIO_MODEL:-google/gemma-4-e4b}
+      GEMINI_PROXY_URL: http://gemini-proxy:8001
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -125,6 +126,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      gemini-proxy:
         condition: service_healthy
     deploy:
       resources:
@@ -150,6 +153,24 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+  gemini-proxy:
+    build:
+      context: ./gemini-proxy
+      dockerfile: Dockerfile
+    container_name: autocategory_gemini_proxy
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+      GEMINI_COOKIE_PATH: /app/gemini_cookies
+    volumes:
+      - gemini_cookies:/app/gemini_cookies
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   # Cloudflare Tunnel setup (run once, then stop)
   cf-setup:
@@ -204,3 +225,4 @@ volumes:
   postgres_data:
   redis_data:
   cf_runtime:
+  gemini_cookies:

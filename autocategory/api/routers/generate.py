@@ -21,7 +21,7 @@ from database import get_db
 from dependencies import require_api_key
 from models import APIKey
 from services import attribute_selector, classifier, image_analyzer
-from services.llm_service import suggest_field_values
+from services.llm_service import suggest_field_values, understand_product
 from services.omni_sync_service import get_attributes_for_category
 
 logger = logging.getLogger(__name__)
@@ -121,15 +121,27 @@ async def generate_from_images(req: GenerateFromImagesRequest, db: Session = Dep
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.post("/generate/from-text", summary="[Nút 2] Tiêu đề + mô tả → phân loại danh mục + thuộc tính")
+@router.post("/generate/from-text", summary="[Nút 2] Tiêu đề + mô tả → phân loại danh mục + thuộc tính + gợi ý nội dung")
 async def generate_from_text(req: GenerateFromTextRequest, db: Session = Depends(get_db)):
     """
-    Mode 2: Từ tiêu đề + mô tả – phân loại danh mục và trả về thuộc tính cần điền.
+    Mode 2: Từ tiêu đề + mô tả – phân loại danh mục, trả về thuộc tính cần điền
+    và đề xuất tiêu đề/mô tả được cải thiện (không cần ảnh).
     """
     try:
-        category_result = await classifier.classify_product(
+        # Gợi ý tiêu đề & mô tả dựa trên text (không cần ảnh)
+        understanding = await understand_product(
             title=req.title,
             description=req.description,
+            price=req.price,
+        )
+        suggested_title = understanding.get("suggested_title") or req.title
+        suggested_description = understanding.get("suggested_description") or req.description
+
+        # Phân loại dùng text đã được chuẩn hoá
+        classify_title = understanding.get("normalized_product_text") or suggested_title or req.title
+        category_result = await classifier.classify_product(
+            title=classify_title,
+            description=suggested_description or req.description,
             price=req.price,
             fast=False,
         )
@@ -142,6 +154,11 @@ async def generate_from_text(req: GenerateFromTextRequest, db: Session = Depends
         return {
             "status": "ok",
             "mode": "from_text",
+            "suggested": {
+                "title": suggested_title,
+                "description": suggested_description,
+                "confidence": understanding.get("confidence"),
+            },
             "category_suggestion": {
                 "category_id": category_id,
                 "category_name": selected.get("name") or rerank.get("category_name"),
@@ -292,6 +309,27 @@ async def generate_stream(req: GenerateStreamRequest, db: Session = Depends(get_
         elif not title:
             yield _sse({"step": "error", "stage": "input", "message": "Cần ít nhất ảnh hoặc tiêu đề sản phẩm."})
             return
+        else:
+            # Không có ảnh nhưng có text → gợi ý tiêu đề/mô tả từ LLM
+            yield _sse({"step": "analyzing_text", "message": "Đang phân tích nội dung để gợi ý tiêu đề và mô tả…"})
+            try:
+                text_result = await understand_product(
+                    title=title,
+                    description=description,
+                    price=req.price,
+                )
+                title = (text_result.get("suggested_title") or title).strip()
+                description = (text_result.get("suggested_description") or description).strip()
+                yield _sse({
+                    "step": "text_analysis",
+                    "title": title,
+                    "description": description,
+                    "confidence": text_result.get("confidence"),
+                })
+            except Exception as exc:
+                logger.exception("generate_stream text_analysis error")
+                yield _sse({"step": "error", "stage": "text_analysis", "message": str(exc)})
+                return
 
         # ── Step 2: Classification ────────────────────────────────────────
         yield _sse({"step": "classifying", "message": "Đang phân loại danh mục…"})

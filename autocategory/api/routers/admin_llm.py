@@ -33,14 +33,18 @@ class LLMConfig(BaseModel):
     llama_model: str
     lm_studio_base_url: str
     lm_studio_model: str
+    gemini_web_secure_1psid: str
+    gemini_web_secure_1psidts: str
     active_base_url: str
     active_model: str
 
 
 class SwitchProviderRequest(BaseModel):
-    provider: Literal["llama", "lm_studio"]
+    provider: Literal["llama", "lm_studio", "gemini_web"]
     lm_studio_base_url: str | None = None
     lm_studio_model: str | None = None
+    gemini_web_secure_1psid: str | None = None
+    gemini_web_secure_1psidts: str | None = None
 
 
 class TestResult(BaseModel):
@@ -62,6 +66,9 @@ async def get_llm_config(current_admin: CurrentAdminUser):
     if rc.llm_provider == "lm_studio":
         active_url = rc.lm_studio_base_url
         active_model = rc.lm_studio_model
+    elif rc.llm_provider == "gemini_web":
+        active_url = "https://gemini.google.com"
+        active_model = "gemini-web"
     else:
         active_url = rc.llama_base_url
         active_model = rc.llama_model
@@ -72,6 +79,8 @@ async def get_llm_config(current_admin: CurrentAdminUser):
         llama_model=rc.llama_model,
         lm_studio_base_url=rc.lm_studio_base_url,
         lm_studio_model=rc.lm_studio_model,
+        gemini_web_secure_1psid=rc.gemini_web_secure_1psid,
+        gemini_web_secure_1psidts=rc.gemini_web_secure_1psidts,
         active_base_url=active_url,
         active_model=active_model,
     )
@@ -101,6 +110,14 @@ async def switch_provider(req: SwitchProviderRequest, current_admin: CurrentAdmi
         if req.lm_studio_model:
             rc.set_lm_studio_model(req.lm_studio_model, db, current_admin.id)
 
+        if req.gemini_web_secure_1psid is not None or req.gemini_web_secure_1psidts is not None:
+            psid = req.gemini_web_secure_1psid or rc.gemini_web_secure_1psid
+            psidts = req.gemini_web_secure_1psidts or rc.gemini_web_secure_1psidts
+            rc.set_gemini_web_cookies(psid, psidts, db, current_admin.id)
+            # Push new cookies to gemini-proxy container immediately
+            from services.gemini_web_service import configure as _configure_proxy
+            await _configure_proxy(psid, psidts or "")
+
     finally:
         db.close()
 
@@ -116,8 +133,33 @@ async def switch_provider(req: SwitchProviderRequest, current_admin: CurrentAdmi
 async def test_llm_provider(current_admin: CurrentAdminUser):
     """
     Gửi một request đơn giản đến provider hiện tại để kiểm tra kết nối và tốc độ.
-    Dùng để xác nhận LM Studio đang chạy và model đã load.
+    Gemini Web: gửi prompt đơn giản, kiểm tra cookie có hợp lệ không.
     """
+    if runtime_config.llm_provider == "gemini_web":
+        start = time.monotonic()
+        try:
+            from services.gemini_web_service import chat as _gemini_chat
+            text = await _gemini_chat("Reply with one word: OK")
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+            return TestResult(
+                provider="gemini_web",
+                base_url="https://gemini.google.com",
+                model="gemini-web",
+                success=True,
+                latency_ms=latency_ms,
+                response_preview=text[:200],
+            )
+        except Exception as exc:
+            latency_ms = round((time.monotonic() - start) * 1000, 1)
+            return TestResult(
+                provider="gemini_web",
+                base_url="https://gemini.google.com",
+                model="gemini-web",
+                success=False,
+                latency_ms=latency_ms,
+                error=str(exc),
+            )
+
     if runtime_config.llm_provider == "lm_studio":
         base_url = runtime_config.lm_studio_base_url
         model = runtime_config.lm_studio_model
