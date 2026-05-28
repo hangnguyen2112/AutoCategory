@@ -100,6 +100,7 @@ export const categoriesAPI = {
   count: () => api.get('/admin/categories/count'),
   buildIndex: (data) => api.post('/admin/categories/rebuild-index', data || { force: false, only_leaf_categories: true }),
   rebuildIndex: (data) => api.post('/admin/categories/rebuild-index', data || { force: true, only_leaf_categories: true }),
+  rebuildIndexStatus: () => api.get('/admin/categories/rebuild-index/status'),
   sync: (params) => api.post('/admin/categories/sync', { params }),
   syncHistory: (params) => api.get('/admin/categories/sync/history', { params }),
   syncLatest: () => api.get('/admin/categories/sync/latest'),

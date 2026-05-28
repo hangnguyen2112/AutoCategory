@@ -278,42 +278,92 @@ function SyncHistoryModal({ onClose }) {
 
 // Rebuild Confirmation Modal
 function RebuildModal({ onClose, onConfirm }) {
-  const [loading, setLoading] = useState(false)
+  const [phase, setPhase] = useState('confirm') // confirm | running | done | error
+  const [result, setResult] = useState(null)
+  const [errorMsg, setErrorMsg] = useState('')
 
   const handleRebuild = async () => {
-    setLoading(true)
+    setPhase('running')
     try {
-      const result = await categoriesAPI.rebuildIndex()
-      const catCount = result.data?.categories_indexed ?? '?'
-      const attrCount = result.data?.attributes_indexed ?? '?'
-      toast.success(`Rebuilt indexes: ${catCount} categories, ${attrCount} attribute options indexed!`)
-      onConfirm()
-      onClose()
+      await categoriesAPI.rebuildIndex()
     } catch (error) {
-      toast.error('Failed to rebuild index: ' + (error.response?.data?.detail || error.message))
-    } finally {
-      setLoading(false)
+      setPhase('error')
+      setErrorMsg(error.response?.data?.detail || error.message)
+      return
     }
+    // Poll until done or error
+    const poll = setInterval(async () => {
+      try {
+        const res = await categoriesAPI.rebuildIndexStatus()
+        const job = res.data
+        if (job.status === 'done') {
+          clearInterval(poll)
+          setResult(job.result)
+          setPhase('done')
+          toast.success(`Rebuilt: ${job.result.categories_indexed} categories, ${job.result.attributes_indexed} attribute options (${job.result.time_taken_seconds}s)`)
+          onConfirm()
+        } else if (job.status === 'error') {
+          clearInterval(poll)
+          setPhase('error')
+          setErrorMsg(job.error || 'Unknown error')
+        }
+      } catch (e) {
+        // ignore transient poll errors
+      }
+    }, 3000)
   }
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
         <h2 className="text-xl font-bold text-red-600 mb-4">Rebuild Qdrant Index</h2>
-        <p className="text-gray-700 dark:text-gray-300 mb-4">
-          This will rebuild the entire Qdrant vector index. This may take several minutes and will temporarily affect classification performance.
-        </p>
-        <p className="text-gray-700 dark:text-gray-300 mb-6">
-          <strong>Are you sure you want to continue?</strong>
-        </p>
-        <div className="flex gap-2 justify-end">
-          <button onClick={onClose} className="btn btn-secondary">
-            Cancel
-          </button>
-          <button onClick={handleRebuild} disabled={loading} className="btn btn-danger">
-            {loading ? 'Rebuilding...' : 'Rebuild Index'}
-          </button>
-        </div>
+
+        {phase === 'confirm' && (
+          <>
+            <p className="text-gray-700 dark:text-gray-300 mb-4">
+              This will rebuild the entire Qdrant vector index. This may take several minutes and will temporarily affect classification performance.
+            </p>
+            <p className="text-gray-700 dark:text-gray-300 mb-6">
+              <strong>Are you sure you want to continue?</strong>
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={onClose} className="btn btn-secondary">Cancel</button>
+              <button onClick={handleRebuild} className="btn btn-danger">Rebuild Index</button>
+            </div>
+          </>
+        )}
+
+        {phase === 'running' && (
+          <div className="text-center py-6">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-600 mx-auto mb-4"></div>
+            <p className="text-gray-700 dark:text-gray-300">Rebuilding index in background…</p>
+            <p className="text-sm text-gray-500 mt-2">This may take several minutes. You can close this dialog and the rebuild will continue.</p>
+            <button onClick={onClose} className="btn btn-secondary mt-4">Close</button>
+          </div>
+        )}
+
+        {phase === 'done' && (
+          <div className="text-center py-4">
+            <p className="text-green-600 font-semibold text-lg mb-2">✓ Rebuild complete</p>
+            {result && (
+              <p className="text-gray-700 dark:text-gray-300 text-sm">
+                {result.categories_indexed} categories · {result.attributes_indexed} attribute options · {result.time_taken_seconds}s
+              </p>
+            )}
+            <button onClick={onClose} className="btn btn-primary mt-4">Close</button>
+          </div>
+        )}
+
+        {phase === 'error' && (
+          <div className="py-4">
+            <p className="text-red-600 font-semibold mb-2">✗ Rebuild failed</p>
+            <pre className="text-xs bg-gray-100 dark:bg-gray-900 p-2 rounded overflow-auto max-h-40">{errorMsg}</pre>
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={onClose} className="btn btn-secondary">Close</button>
+              <button onClick={() => { setPhase('confirm'); setErrorMsg('') }} className="btn btn-danger">Retry</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

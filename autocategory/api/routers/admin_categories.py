@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from datetime import datetime
+import asyncio
 import json
 import time
 from typing import Optional
@@ -360,6 +361,197 @@ async def generate_descriptions(
     return {"updated": updated, "skipped": skipped, "total": len(cats)}
 
 
+# ── Rebuild job state (in-memory + Redis persistence) ────────────────────────
+_REDIS_JOB_KEY = "autocategory:rebuild_job"
+_rebuild_job: dict = {"status": "idle", "started_at": None, "result": None, "error": None}
+
+
+def _job_save(state: dict) -> None:
+    """Persist job state to Redis (best-effort)."""
+    try:
+        import redis as _redis
+        from config import settings as _s
+        r = _redis.from_url(_s.redis_url, decode_responses=True)
+        r.set(_REDIS_JOB_KEY, json.dumps(state), ex=86400)  # TTL 24h
+    except Exception:
+        pass
+
+
+def _job_load() -> dict:
+    """Load job state from Redis on startup."""
+    try:
+        import redis as _redis
+        from config import settings as _s
+        r = _redis.from_url(_s.redis_url, decode_responses=True)
+        raw = r.get(_REDIS_JOB_KEY)
+        if raw:
+            saved = json.loads(raw)
+            # If was "running" before restart → mark as error
+            if saved.get("status") == "running":
+                saved["status"] = "error"
+                saved["error"] = "API restarted during rebuild. Please rebuild again."
+            return saved
+    except Exception:
+        pass
+    return {"status": "idle", "started_at": None, "result": None, "error": None}
+
+
+# Restore on module load
+_rebuild_job.update(_job_load())
+
+
+async def _run_rebuild(request_force: bool, request_only_leaf: bool, admin_id: int) -> None:
+    """Background coroutine – runs rebuild entirely, updates _rebuild_job.
+
+    Safety: embeddings are computed FIRST, then collection is replaced atomically
+    (delete + upsert). This prevents an empty index if the process is killed mid-way.
+    """
+    import time as _time
+    from database import SessionLocal
+    from sqlalchemy.orm import joinedload
+    from models import Category as CategoryModel, CategoryField, CategorySyncHistory
+    from services import qdrant_service as qs
+    from services.embedder import embed_texts
+
+    _rebuild_job["status"] = "running"
+    _rebuild_job["error"] = None
+    _rebuild_job["result"] = None
+    _job_save(_rebuild_job)
+    try:
+        start_time = _time.time()
+        db = SessionLocal()
+        try:
+            all_cats_orm = (
+                db.query(CategoryModel)
+                .filter(CategoryModel.is_active == 1)
+                .options(joinedload(CategoryModel.fields))
+                .all()
+            )
+            cat_map = {c.id: c for c in all_cats_orm}
+            parent_ids_set = {c.parent_id for c in all_cats_orm if c.parent_id is not None}
+
+            def _path(cat_id: int) -> str:
+                names: list[str] = []
+                cid: int | None = cat_id
+                visited: set = set()
+                while cid and cid not in visited:
+                    visited.add(cid)
+                    c = cat_map.get(cid)
+                    if not c:
+                        break
+                    names.append(c.name)
+                    cid = c.parent_id
+                return " > ".join(reversed(names))
+
+            target_cats = (
+                [c for c in all_cats_orm if c.id not in parent_ids_set]
+                if request_only_leaf else list(all_cats_orm)
+            )
+
+            # ── Step 1: build all texts ───────────────────────────────────────
+            profiles, texts = [], []
+            for cat in target_cats:
+                path = _path(cat.id)
+                attr_parts: list[str] = []
+                for field in (cat.fields or []):
+                    attr_parts.append(field.field_label)
+                    for opt in (field.field_options or []):
+                        lbl = opt.get("label") or opt.get("value", "")
+                        if lbl:
+                            attr_parts.append(lbl)
+                attr_text = " ".join(attr_parts)
+                search_text = f"{cat.name} {cat.description or ''} {path} {attr_text}".strip()
+                profiles.append({
+                    "category_id": cat.id,
+                    "name": cat.name,
+                    "parent_id": cat.parent_id,
+                    "path": path,
+                    "description": cat.description,
+                    "is_leaf": cat.id not in parent_ids_set,
+                    "is_active": True,
+                })
+                texts.append(search_text)
+
+            # ── Step 2: embed ALL vectors first (small batches to avoid OOM) ──
+            all_vecs: list[list[float]] = []
+            for i in range(0, len(texts), 8):
+                vecs = await embed_texts(texts[i:i + 8])
+                all_vecs.extend(vecs)
+            logger.info("Embeddings ready: %d categories", len(all_vecs))
+
+            # ── Step 3: atomic swap – delete old, upsert new ──────────────────
+            if request_force:
+                await qs.delete_collection()
+            await qs.ensure_collection()
+            indexed = await qs.upsert_categories(profiles, all_vecs) if profiles else 0
+
+            # ── Step 4: attribute options (embed first, then replace) ─────────
+            fields_all = db.query(CategoryField).all()
+            option_dicts: list[dict] = []
+            attr_texts: list[str] = []
+            for field in fields_all:
+                for opt in (field.field_options or []):
+                    label = opt.get("label") or opt.get("value", "")
+                    value = opt.get("value", "")
+                    if not value:
+                        continue
+                    embed_text = f"{field.field_label}: {label}" if label != value else label
+                    option_dicts.append({
+                        "field_id": field.id,
+                        "field_key": field.field_key,
+                        "field_label": field.field_label,
+                        "category_id": field.category_id,
+                        "option_value": value,
+                        "option_label": label,
+                    })
+                    attr_texts.append(embed_text)
+
+            attr_vectors: list[list[float]] = []
+            for i in range(0, len(attr_texts), 64):
+                vecs = await embed_texts(attr_texts[i:i + 64])
+                attr_vectors.extend(vecs)
+            logger.info("Attr embeddings ready: %d options", len(attr_vectors))
+
+            # Atomic swap for attributes
+            if request_force:
+                try:
+                    await qs.delete_attr_collection()
+                except Exception:
+                    pass
+            await qs.ensure_attr_collection()
+            attrs_indexed = await qs.upsert_attribute_options(option_dicts, attr_vectors) if option_dicts else 0
+
+            time_taken = round(_time.time() - start_time, 2)
+
+            sync_history = CategorySyncHistory(
+                source="rebuild_index",
+                sync_type="manual",
+                changes_detected=True,
+                categories_modified=indexed,
+                success=True,
+                synced_by=admin_id,
+            )
+            db.add(sync_history)
+            db.commit()
+
+            _rebuild_job["status"] = "done"
+            _rebuild_job["result"] = {
+                "categories_indexed": indexed,
+                "attributes_indexed": attrs_indexed,
+                "time_taken_seconds": time_taken,
+            }
+            _job_save(_rebuild_job)
+            logger.info("rebuild_qdrant_index done: %s cats, %s attrs, %.1fs", indexed, attrs_indexed, time_taken)
+        finally:
+            db.close()
+    except Exception as exc:
+        import traceback
+        _rebuild_job["status"] = "error"
+        _rebuild_job["error"] = traceback.format_exc()
+        _job_save(_rebuild_job)
+        logger.exception("_run_rebuild failed: %s", exc)
+
+
 @router.post("/rebuild-index", response_model=CategoryRebuildIndexResponse)
 async def rebuild_qdrant_index(
     current_admin: CurrentAdminUser,
@@ -367,150 +559,42 @@ async def rebuild_qdrant_index(
     db: Session = Depends(get_db)
 ):
     """
-    Rebuild Qdrant vector index from DB categories table.
-
-    This will:
-    1. Load categories from DB
-    2. Delete existing Qdrant collection (if force=True)
-    3. Recreate collection
-    4. Embed and index all leaf categories (active)
+    Rebuild Qdrant vector index from DB categories table (runs as background task).
+    Returns immediately with status=accepted. Poll /rebuild-index/status for progress.
     """
-    try:
-        start_time = time.time()
+    if _rebuild_job["status"] == "running":
+        raise HTTPException(status_code=409, detail="Rebuild already in progress")
 
-        from models import Category as CategoryModel
-        from services import qdrant_service as qs
-        from services.embedder import embed_single, embed_texts
+    import datetime
+    _rebuild_job["status"] = "running"
+    _rebuild_job["started_at"] = datetime.datetime.utcnow().isoformat()
+    _rebuild_job["result"] = None
+    _rebuild_job["error"] = None
 
-        # Load categories from DB
-        all_cats_orm = db.query(CategoryModel).filter(CategoryModel.is_active == 1).all()
-        cat_map = {c.id: c for c in all_cats_orm}
-        parent_ids_set = {c.parent_id for c in all_cats_orm if c.parent_id is not None}
+    asyncio.create_task(_run_rebuild(request.force, request.only_leaf_categories, current_admin.id))
 
-        def _path(cat_id: int) -> str:
-            names: list[str] = []
-            cid: int | None = cat_id
-            visited: set = set()
-            while cid and cid not in visited:
-                visited.add(cid)
-                c = cat_map.get(cid)
-                if not c:
-                    break
-                names.append(c.name)
-                cid = c.parent_id
-            return " > ".join(reversed(names))
+    return CategoryRebuildIndexResponse(
+        success=True,
+        categories_indexed=0,
+        attributes_indexed=0,
+        time_taken_seconds=0,
+    )
 
-        if request.only_leaf_categories:
-            target_cats = [c for c in all_cats_orm if c.id not in parent_ids_set]
-        else:
-            target_cats = list(all_cats_orm)
 
-        # Recreate Qdrant collection
-        if request.force:
-            await qs.delete_collection()
-
-        await qs.ensure_collection()
-
-        profiles = []
-        texts = []
-
-        for cat in target_cats:
-            path = _path(cat.id)
-            search_text = f"{cat.name} {cat.description or ''} {path}".strip()
-            profiles.append({
-                "category_id": cat.id,
-                "name": cat.name,
-                "parent_id": cat.parent_id,
-                "path": path,
-                "description": cat.description,
-                "is_leaf": cat.id not in parent_ids_set,
-                "is_active": True,
-            })
-            texts.append(search_text)
-
-        vectors = await embed_texts(texts) if texts else []
-        indexed = await qs.upsert_categories(profiles, vectors) if profiles else 0
-
-        # ── Rebuild attribute options index ───────────────────────────────────
-        from models import CategoryField
-
-        if request.force:
-            try:
-                await qs.delete_attr_collection()
-            except Exception:
-                pass
-        await qs.ensure_attr_collection()
-
-        fields = db.query(CategoryField).all()
-        option_dicts: list[dict] = []
-        attr_texts: list[str] = []
-        for field in fields:
-            for opt in (field.field_options or []):
-                label = opt.get("label") or opt.get("value", "")
-                value = opt.get("value", "")
-                if not value:
-                    continue
-                embed_text = f"{field.field_label}: {label}" if label != value else label
-                option_dicts.append({
-                    "field_id": field.id,
-                    "field_key": field.field_key,
-                    "field_label": field.field_label,
-                    "category_id": field.category_id,
-                    "option_value": value,
-                    "option_label": label,
-                })
-                attr_texts.append(embed_text)
-
-        attr_vectors: list[list[float]] = []
-        batch_size = 256
-        for i in range(0, len(attr_texts), batch_size):
-            vecs = await embed_texts(attr_texts[i:i + batch_size])
-            attr_vectors.extend(vecs)
-        attrs_indexed = await qs.upsert_attribute_options(option_dicts, attr_vectors) if option_dicts else 0
-
-        time_taken = time.time() - start_time
-
-        # Log
-        sync_history = CategorySyncHistory(
-            source="rebuild_index",
-            sync_type="manual",
-            changes_detected=True,
-            categories_modified=indexed,
-            success=True,
-            synced_by=current_admin.id
-        )
-        db.add(sync_history)
-        db.commit()
-
-        return CategoryRebuildIndexResponse(
-            success=True,
-            categories_indexed=indexed,
-            attributes_indexed=attrs_indexed,
-            time_taken_seconds=round(time_taken, 2)
-        )
-
-    except Exception as e:
-        import traceback
-        err_detail = traceback.format_exc()
-        logger.exception("rebuild_qdrant_index failed: %s", err_detail)
-        try:
-            sync_history = CategorySyncHistory(
-                source="rebuild_index",
-                sync_type="manual",
-                changes_detected=False,
-                success=False,
-                error_message=err_detail[:500],
-                synced_by=current_admin.id
-            )
-            db.add(sync_history)
-            db.commit()
-        except Exception:
-            pass
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Index rebuild failed: {repr(e)}\n{err_detail}"
-        )
+@router.get("/rebuild-index/status")
+async def rebuild_index_status(current_admin: CurrentAdminUser):
+    """Poll rebuild job status. Survives API restarts via Redis."""
+    # If in-memory says idle but Redis has a more recent state, use Redis
+    if _rebuild_job["status"] == "idle":
+        saved = _job_load()
+        if saved.get("status") not in ("idle", None):
+            _rebuild_job.update(saved)
+    return {
+        "status": _rebuild_job["status"],       # idle | running | done | error
+        "started_at": _rebuild_job["started_at"],
+        "result": _rebuild_job["result"],
+        "error": _rebuild_job["error"],
+    }
 
 
 # ─────────────────────────────────────────────
