@@ -213,7 +213,8 @@ class CategoryField(Base):
     field_options = Column(JSON)                       # [{value, label, featured, sort_order}]
     is_required = Column(Boolean, default=False)
     is_featured = Column(Boolean, default=False)
-    parent_field_id = Column(Integer, nullable=True)  # id của field cha (trong omni)
+    omni_field_id = Column(Integer, nullable=True, index=True)  # ID gốc của field trong Omni
+    parent_field_id = Column(Integer, nullable=True)             # omni_field_id của field cha
     parent_field_value = Column(String(255), nullable=True)
     sort_order = Column(Integer, default=0)
 

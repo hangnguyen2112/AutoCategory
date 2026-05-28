@@ -595,7 +595,7 @@
   .verdict-hop { background:#0ea5e930; color:#38bdf8; border:1px solid #0ea5e960; }
   .verdict-dat { background:#ef444430; color:#f87171; border:1px solid #ef444460; }
   .verdict-hdat { background:#f9731630; color:#fb923c; border:1px solid #f9731660; }
-  .verdict-? { background:var(--surface2); color:var(--muted); border:1px solid var(--border); }
+  .verdict-unknown { background:var(--surface2); color:var(--muted); border:1px solid var(--border); }
   .advice-list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:4px; }
   .advice-list li { background:var(--surface2); border:1px solid var(--border); border-radius:7px; padding:6px 12px; font-size:.83rem; line-height:1.5; }
   .advice-list li.red { border-color:#ef444460; background:#ef444410; }
@@ -1596,7 +1596,7 @@ async function runBuyerAdvice() {
       'hơi đắt': 'verdict-hdat', 'đắt': 'verdict-dat',
     };
     const pa = a.price_analysis || {};
-    const vClass = verdictMap[pa.verdict] || 'verdict-?';
+    const vClass = verdictMap[pa.verdict] || 'verdict-unknown';
     const verdictHtml = `<div class="advice-section">
       <div class="advice-section-title">💰 Đánh giá giá</div>
       <span class="advice-verdict ${vClass}">${esc(pa.verdict || 'không rõ')}</span>
@@ -1875,38 +1875,43 @@ function _findBestOption(options, strVal) {
 
 function applyFieldSuggestions(suggestions) {
   if (!suggestions || Object.keys(suggestions).length === 0) return;
-  Object.entries(suggestions).forEach(([fieldKey, value]) => {
-    if (value === null || value === undefined || value === '') return;
+
+  // Lượt 1: áp dụng các field gốc (không conditional) trước
+  // để chúng trigger change → các conditional field xuất hiện
+  const allEntries = Object.entries(suggestions).filter(([, v]) => v !== null && v !== undefined && v !== '');
+  const conditionalKeys = new Set(
+    Array.from(document.querySelectorAll('#fields-form-body .field-group[data-parent-field]'))
+      .flatMap(g => Array.from(g.querySelectorAll('[data-field-key]')).map(e => e.dataset.fieldKey))
+  );
+
+  const parentEntries = allEntries.filter(([k]) => !conditionalKeys.has(k));
+  const childEntries  = allEntries.filter(([k]) =>  conditionalKeys.has(k));
+
+  function applyOne(fieldKey, value) {
     const strVal = String(value);
-    // Try select element
     const sel = document.querySelector(`select[data-field-key="${fieldKey}"]`);
     if (sel) {
-      const allOpts = Array.from(sel.options).slice(1); // skip placeholder
+      const allOpts = Array.from(sel.options).slice(1);
       const opt = _findBestOption(allOpts, strVal);
-      if (opt) {
-        sel.value = opt.value;
-        sel.dispatchEvent(new Event('change'));
-      }
+      if (opt) { sel.value = opt.value; sel.dispatchEvent(new Event('change')); }
       return;
     }
-    // Try radio group
     const radios = document.querySelectorAll(`input[name="field_${fieldKey}"]`);
     if (radios.length) {
       const radioOpts = Array.from(radios).map(r => ({ value: r.value, text: r.closest('.radio-option')?.querySelector('span')?.textContent || r.value, el: r }));
       const match = _findBestOption(radioOpts, strVal);
-      if (match) {
-        const labelEl = match.el.closest('.radio-option');
-        if (labelEl) selectRadio(labelEl, fieldKey);
-      }
+      if (match) { const labelEl = match.el.closest('.radio-option'); if (labelEl) selectRadio(labelEl, fieldKey); }
       return;
     }
-    // Try text input
     const inp = document.querySelector(`input[data-field-key="${fieldKey}"]`);
-    if (inp) {
-      inp.value = strVal;
-      inp.dispatchEvent(new Event('input'));
-    }
-  });
+    if (inp) { inp.value = strVal; inp.dispatchEvent(new Event('input')); }
+  }
+
+  // Áp dụng parent trước
+  parentEntries.forEach(([k, v]) => applyOne(k, v));
+  // Sau đó áp dụng conditional (đã được hiện sau lượt 1)
+  childEntries.forEach(([k, v]) => applyOne(k, v));
+
   updateFieldsJSON();
 }
 
@@ -1961,13 +1966,15 @@ function renderFieldInput(f) {
   const type = f.field_type || f.type || 'text';
   const key  = esc(f.field_key || String(f.id));
   const opts = f.field_options || f.options || [];
+  // Dùng omni_field_id để match với parent_field_id (cùng hệ thống ID từ vuatot.vn)
+  const omniId = f.omni_field_id || f.id || '';
   if (type === 'select') {
     const feat = opts.filter(o => o.featured).sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
     const rest = opts.filter(o =>!o.featured).sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
     let optsHtml = `<option value="">-- Chọn ${esc(f.field_label||'')} --</option>`;
     if (feat.length) optsHtml += `<optgroup label="Phổ biến">${feat.map(o=>`<option value="${esc(String(o.value))}">${esc(o.label||o.value)}</option>`).join('')}</optgroup>`;
     if (rest.length) optsHtml += `<optgroup label="Khác">${rest.map(o=>`<option value="${esc(String(o.value))}">${esc(o.label||o.value)}</option>`).join('')}</optgroup>`;
-    return `<select class="field-select" data-field-key="${key}" data-field-id="${f.id||''}" onchange="onFieldChange(this)">${optsHtml}</select>`;
+    return `<select class="field-select" data-field-key="${key}" data-field-id="${omniId}" onchange="onFieldChange(this)">${optsHtml}</select>`;
   }
   if (type === 'radio') {
     const radios = opts.map(o =>
@@ -1975,9 +1982,9 @@ function renderFieldInput(f) {
         <input type="radio" name="field_${key}" value="${esc(String(o.value))}" />
         ${esc(o.label||o.value)}
       </label>`).join('');
-    return `<div class="radio-group" data-field-key="${key}" data-field-id="${f.id||''}">${radios}</div>`;
+    return `<div class="radio-group" data-field-key="${key}" data-field-id="${omniId}">${radios}</div>`;
   }
-  return `<input class="field-input" type="text" data-field-key="${key}" data-field-id="${f.id||''}" placeholder="${esc(f.field_label||f.field_key||'')}..." oninput="updateFieldsJSON()" />`;
+  return `<input class="field-input" type="text" data-field-key="${key}" data-field-id="${omniId}" placeholder="${esc(f.field_label||f.field_key||'')}..." oninput="updateFieldsJSON()" />`;
 }
 
 function selectRadio(labelEl, fieldKey) {
@@ -1992,11 +1999,12 @@ function selectRadio(labelEl, fieldKey) {
 function onFieldChange(sel) { onFieldChangeByKey(sel.dataset.fieldKey, sel.value, sel.dataset.fieldId); }
 
 function onFieldChangeByKey(fieldKey, value, fieldId) {
+  const valueLower = (value || '').toLowerCase().trim();
   document.querySelectorAll('#fields-form-body .field-group[data-parent-field]').forEach(g => {
     const pid = g.dataset.parentField; const pval = g.dataset.parentValue;
     const match = (fieldId && String(pid) === String(fieldId)) || pid === fieldKey;
     if (match) {
-      const show = value === pval;
+      const show = valueLower === (pval || '').toLowerCase().trim();
       g.classList.toggle('conditional-hidden', !show);
       if (!show) clearGroupFields(g);
     }

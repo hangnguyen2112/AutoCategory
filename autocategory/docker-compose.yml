@@ -3,7 +3,7 @@ version: "3.9"
 services:
 
   llama-server:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    image: ghcr.io/ggml-org/llama.cpp:server
     container_name: autocategory_llama
     restart: unless-stopped
     environment:
@@ -19,19 +19,10 @@ services:
       --port 8080
       --ctx-size 8192
       --n-predict 512
-      --n-gpu-layers 99
       --log-disable
-      --flash-attn on
       --jinja
       --reasoning off
       --chat-template-kwargs '{"enable_thinking":false}'
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'true < /dev/tcp/localhost/8080' 2>/dev/null"]
       interval: 10s
@@ -132,13 +123,6 @@ services:
         condition: service_healthy
       deepseek-proxy:
         condition: service_healthy
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 20s
@@ -200,7 +184,7 @@ services:
     container_name: autocategory_cf_setup
     env_file: .env
     volumes:
-      - cf_runtime:/etc/cloudflared
+      - cf_runtime:/cf-runtime
     restart: "no"
     profiles:
       - setup
@@ -210,17 +194,14 @@ services:
     image: cloudflare/cloudflared:latest
     container_name: autocategory_tunnel
     restart: unless-stopped
-    command: tunnel run
+    command: tunnel --config /cf-runtime/config.yml run
     volumes:
-      - cf_runtime:/etc/cloudflared:ro
+      - cf_runtime:/cf-runtime:ro
     environment:
-      - TUNNEL_TOKEN_FILE=/etc/cloudflared/token
       - TZ=${TZ:-Asia/Ho_Chi_Minh}
     depends_on:
       nginx:
         condition: service_started
-    profiles:
-      - tunnel
 
   nginx:
     image: nginx:alpine

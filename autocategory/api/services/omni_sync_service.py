@@ -71,6 +71,7 @@ def get_all_attributes(db: Session) -> dict[str, list]:
 def _field_to_dict(f: CategoryField) -> dict:
     return {
         "id": f.id,
+        "omni_field_id": f.omni_field_id,
         "field_key": f.field_key,
         "field_label": f.field_label,
         "field_type": f.field_type,
@@ -180,6 +181,7 @@ async def sync_attributes_from_omni(
                 for idx, f in enumerate(fields):
                     db.add(CategoryField(
                         category_id=cat_id,
+                        omni_field_id=f.get("id"),
                         field_key=f.get("field_key", ""),
                         field_label=f.get("field_label", ""),
                         field_type=f.get("field_type", "text"),

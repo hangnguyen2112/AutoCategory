@@ -123,6 +123,7 @@ export default function SystemControl() {
     lm_studio_model: '',
     gemini_web_secure_1psid: '',
     gemini_web_secure_1psidts: '',
+    gemini_web_model: 'unspecified',
     deepseek_api_key: '',
     deepseek_model: 'deepseek-chat',
   })
@@ -132,6 +133,8 @@ export default function SystemControl() {
   const [showPsid, setShowPsid] = useState(false)
   const [showPsidts, setShowPsidts] = useState(false)
   const [showDeepseekKey, setShowDeepseekKey] = useState(false)
+  const [geminiModels, setGeminiModels] = useState([])
+  const [geminiModelSaving, setGeminiModelSaving] = useState(false)
 
   const fetchData = async () => {
     try {
@@ -164,9 +167,12 @@ export default function SystemControl() {
         lm_studio_model: res.data.lm_studio_model || '',
         gemini_web_secure_1psid: res.data.gemini_web_secure_1psid || '',
         gemini_web_secure_1psidts: res.data.gemini_web_secure_1psidts || '',
+        gemini_web_model: res.data.gemini_web_model || 'unspecified',
         deepseek_api_key: res.data.deepseek_api_key || '',
         deepseek_model: res.data.deepseek_model || 'deepseek-chat',
       })
+      // Load model list từ server (trả về dynamic list hoặc fallback)
+      llmAPI.listModels().then((r) => setGeminiModels(r.data.models || [])).catch(() => {})
     } catch (err) {
       console.error('Failed to load LLM config', err)
     }
@@ -183,6 +189,7 @@ export default function SystemControl() {
       } else if (llmForm.provider === 'gemini_web') {
         payload.gemini_web_secure_1psid = llmForm.gemini_web_secure_1psid
         payload.gemini_web_secure_1psidts = llmForm.gemini_web_secure_1psidts
+        payload.gemini_web_model = llmForm.gemini_web_model
       } else if (llmForm.provider === 'deepseek') {
         payload.deepseek_api_key = llmForm.deepseek_api_key
         payload.deepseek_model = llmForm.deepseek_model
@@ -203,10 +210,29 @@ export default function SystemControl() {
     try {
       const res = await llmAPI.test()
       setLlmTestResult(res.data)
+      // Sau khi test thành công gemini_web → load danh sách model
+      if (res.data.success && llmForm.provider === 'gemini_web') {
+        const mr = await llmAPI.listModels().catch(() => null)
+        if (mr) setGeminiModels(mr.data.models || [])
+      }
     } catch (err) {
       setLlmTestResult({ success: false, error: err.response?.data?.detail || String(err) })
     } finally {
       setLlmTesting(false)
+    }
+  }
+
+  const handleGeminiModelSave = async (modelId) => {
+    setGeminiModelSaving(true)
+    try {
+      const res = await llmAPI.switchProvider({ provider: 'gemini_web', gemini_web_model: modelId })
+      setLlmConfig(res.data)
+      setLlmForm((f) => ({ ...f, gemini_web_model: modelId }))
+      toast.success(`Đã đặt default model: ${modelId}`)
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Lưu model thất bại')
+    } finally {
+      setGeminiModelSaving(false)
     }
   }
 
@@ -612,6 +638,46 @@ export default function SystemControl() {
                       </button>
                     </div>
                   </div>
+                  {/* Model selector — luôn hiển thị, dùng list động nếu có */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Model
+                      {geminiModels.length > 0 && (
+                        <span className="ml-2 text-xs text-green-600 dark:text-green-400">(danh sách từ server)</span>
+                      )}
+                    </label>
+                    {geminiModels.length > 0 ? (
+                      <select
+                        value={llmForm.gemini_web_model}
+                        onChange={(e) => setLlmForm((f) => ({ ...f, gemini_web_model: e.target.value }))}
+                        className="input w-full"
+                      >
+                        {geminiModels.map((m) => (
+                          <option key={m.id} value={m.id}>{m.name || m.id}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <select
+                        value={llmForm.gemini_web_model}
+                        onChange={(e) => setLlmForm((f) => ({ ...f, gemini_web_model: e.target.value }))}
+                        className="input w-full"
+                      >
+                        <option value="unspecified">Unspecified (default)</option>
+                        <option value="gemini-3-pro">Gemini 3 Pro</option>
+                        <option value="gemini-3-flash">Gemini 3 Flash</option>
+                        <option value="gemini-3-flash-thinking">Gemini 3 Flash Thinking</option>
+                        <option value="gemini-3-pro-plus">Gemini 3 Pro Plus</option>
+                        <option value="gemini-3-flash-plus">Gemini 3 Flash Plus</option>
+                        <option value="gemini-3-flash-thinking-plus">Gemini 3 Flash Thinking Plus</option>
+                        <option value="gemini-3-pro-advanced">Gemini 3 Pro Advanced</option>
+                        <option value="gemini-3-flash-advanced">Gemini 3 Flash Advanced</option>
+                        <option value="gemini-3-flash-thinking-advanced">Gemini 3 Flash Thinking Advanced</option>
+                      </select>
+                    )}
+                    <p className="text-xs text-gray-400 mt-1">
+                      Danh sách models sẽ được cập nhật động sau khi Test kết nối thành công.
+                    </p>
+                  </div>
                 </div>
               )}
 
@@ -674,9 +740,7 @@ export default function SystemControl() {
                 {llmConfig && (
                   <span className="text-sm text-gray-500 dark:text-gray-400">
                     Đang dùng: <strong className="text-gray-800 dark:text-gray-200">{llmConfig.provider}</strong>
-                    {llmConfig.provider !== 'gemini_web' && (
-                      <> — {llmConfig.active_model}</>
-                    )}
+                    {' '}— {llmConfig.active_model}
                   </span>
                 )}
               </div>
@@ -693,7 +757,7 @@ export default function SystemControl() {
                   {llmTestResult.success
                     ? <CheckCircle className="h-5 w-5 text-green-600 mt-0.5 shrink-0" />
                     : <XCircle className="h-5 w-5 text-red-600 mt-0.5 shrink-0" />}
-                  <div className="text-sm">
+                  <div className="text-sm w-full">
                     {llmTestResult.success ? (
                       <>
                         <span className="font-medium text-green-800 dark:text-green-200">Kết nối thành công</span>
@@ -703,6 +767,36 @@ export default function SystemControl() {
                         {llmTestResult.response_preview && (
                           <div className="text-green-700 dark:text-green-300 mt-1 font-mono text-xs">
                             &quot;{llmTestResult.response_preview}&quot;
+                          </div>
+                        )}
+                        {/* Gemini model picker — hiện sau khi test thành công */}
+                        {llmForm.provider === 'gemini_web' && geminiModels.length > 0 && (
+                          <div className="mt-3 pt-3 border-t border-green-200 dark:border-green-700">
+                            <p className="font-medium text-green-800 dark:text-green-200 mb-2">Chọn model mặc định:</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {geminiModels.map((m) => (
+                                <button
+                                  key={m.id}
+                                  disabled={geminiModelSaving}
+                                  onClick={() => handleGeminiModelSave(m.id)}
+                                  className={`flex items-center justify-between px-3 py-2 rounded-lg border text-sm transition-colors ${
+                                    llmForm.gemini_web_model === m.id
+                                      ? 'bg-green-600 border-green-600 text-white font-semibold'
+                                      : 'bg-white dark:bg-gray-800 border-green-300 dark:border-green-600 text-gray-800 dark:text-gray-200 hover:bg-green-50 dark:hover:bg-green-900/30'
+                                  }`}
+                                >
+                                  <span>{m.name}</span>
+                                  {llmForm.gemini_web_model === m.id && (
+                                    <CheckCircle className="h-4 w-4 ml-2 shrink-0" />
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                            {geminiModelSaving && (
+                              <p className="text-xs text-green-600 dark:text-green-400 mt-2 flex items-center gap-1">
+                                <RefreshCw className="h-3 w-3 animate-spin" /> Đang lưu...
+                              </p>
+                            )}
                           </div>
                         )}
                       </>

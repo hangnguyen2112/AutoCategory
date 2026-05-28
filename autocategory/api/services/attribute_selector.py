@@ -170,28 +170,47 @@ async def select_attributes(
 
     await _ensure_qdrant_ready()
 
-    field_by_id: dict[int, dict] = {f["id"]: f for f in attributes if f.get("id")}
-
     # ── Pass 1: root fields ───────────────────────────────────────────────────
     root_fields = [f for f in attributes if not f.get("parent_field_id")]
     result = await _process_fields(root_fields, title, description)
     logger.info("attribute_selector pass1: %s", result)
 
-    # ── Pass 2: conditional fields whose parent condition is satisfied ─────────
+    # ── Pass 2: conditional fields ────────────────────────────────────────────
+    # Ưu tiên lookup bằng omni_field_id nếu đã được lưu khi sync.
+    # Fallback: match parent_field_value với các giá trị đã chọn (cho data cũ chưa có omni_field_id).
+    omni_id_map: dict[int, dict] = {
+        f["omni_field_id"]: f
+        for f in attributes
+        if f.get("omni_field_id") is not None
+    }
+    selected_values_lower = {str(v).lower() for v in result.values() if v}
+
     active_conditional: list[dict] = []
     for f in attributes:
-        parent_id = f.get("parent_field_id")
-        if not parent_id:
-            continue
-        parent_field = field_by_id.get(parent_id)
-        if not parent_field:
+        parent_omni_id = f.get("parent_field_id")
+        if not parent_omni_id:
             continue
         required_val = f.get("parent_field_value")
-        selected_val = result.get(parent_field["field_key"])
-        if selected_val and required_val and str(selected_val) == str(required_val):
+        if not required_val:
+            continue
+
+        if omni_id_map:
+            # Đường chính: tìm parent field qua omni_field_id, lấy giá trị đã chọn của nó
+            parent_field = omni_id_map.get(parent_omni_id)
+            if parent_field:
+                selected_val = result.get(parent_field["field_key"])
+                if selected_val and str(selected_val).lower() == str(required_val).lower():
+                    active_conditional.append(f)
+                continue
+        # Fallback: so khớp parent_field_value với bất kỳ giá trị nào đã chọn
+        if str(required_val).lower() in selected_values_lower:
             active_conditional.append(f)
 
     if active_conditional:
+        logger.info(
+            "attribute_selector pass2: activating %d conditional fields",
+            len(active_conditional),
+        )
         cond_result = await _process_fields(active_conditional, title, description)
         result.update(cond_result)
         logger.info("attribute_selector pass2 added: %s", cond_result)

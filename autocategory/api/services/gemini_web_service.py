@@ -64,10 +64,11 @@ async def reset_client() -> None:
 
 # ── Core chat ──────────────────────────────────────────────────────────────────
 
-async def chat(prompt: str, image_urls: list[str] | None = None) -> str:
+async def chat(prompt: str, image_urls: list[str] | None = None, model: str | None = None) -> str:
     """
     Gửi prompt (và ảnh nếu có) đến gemini-proxy container.
     image_urls: http/https URL hoặc data: base64 URL.
+    model: tên Gemini model (để trống = dùng default proxy).
     Ảnh được decode/download rồi gửi dưới dạng binary multipart.
     Trả về text response.
     """
@@ -97,12 +98,15 @@ async def chat(prompt: str, image_urls: list[str] | None = None) -> str:
     # multipart/form-data instead of application/x-www-form-urlencoded.
     # FastAPI endpoints that mix Form + File params require multipart.
     multipart_files = [("files", (name, raw, mime)) for name, raw, mime in file_tuples]
+    form_data: dict = {"prompt": prompt}
+    if model:
+        form_data["model"] = model
 
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
             f"{PROXY_URL}/chat",
-            data={"prompt": prompt},
-            files=multipart_files,  # empty list still forces multipart/form-data
+            data=form_data,
+            files=multipart_files,
         )
 
         if resp.status_code == 503:
@@ -110,7 +114,7 @@ async def chat(prompt: str, image_urls: list[str] | None = None) -> str:
             await _push_cookies_from_runtime()
             resp = await client.post(
                 f"{PROXY_URL}/chat",
-                data={"prompt": prompt},
+                data=form_data,
                 files=multipart_files,
             )
 
