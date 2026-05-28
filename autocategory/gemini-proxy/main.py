@@ -41,6 +41,11 @@ async def lifespan(app: FastAPI):
         _cookies["secure_1psid"] = psid
         _cookies["secure_1psidts"] = psidts
         logger.info("Loaded Gemini cookies from env vars")
+    # GEMINI_COOKIE_PATH: nếu set, gemini-webapi sẽ tự persist cookie refresh vào đây
+    cookie_path = os.getenv("GEMINI_COOKIE_PATH", "")
+    if cookie_path:
+        os.makedirs(cookie_path, exist_ok=True)
+        logger.info("GEMINI_COOKIE_PATH=%s (cookie persistence enabled)", cookie_path)
     yield
     # Graceful shutdown
     global _client
@@ -131,12 +136,86 @@ class ChatResponse(BaseModel):
     text: str
 
 
+# ── Known models ───────────────────────────────────────────────────────────────
+# Fallback list used only when client is not yet initialized.
+# Actual available models are discovered dynamically at runtime via /models.
+GEMINI_MODELS_FALLBACK: list[dict] = [
+    {"id": "unspecified",                      "name": "Unspecified (default)",              "default": True},
+    {"id": "gemini-3-pro",                     "name": "Gemini 3 Pro",                      "default": False},
+    {"id": "gemini-3-flash",                   "name": "Gemini 3 Flash",                    "default": False},
+    {"id": "gemini-3-flash-thinking",          "name": "Gemini 3 Flash Thinking",           "default": False},
+    {"id": "gemini-3-pro-plus",               "name": "Gemini 3 Pro Plus",                 "default": False},
+    {"id": "gemini-3-flash-plus",             "name": "Gemini 3 Flash Plus",               "default": False},
+    {"id": "gemini-3-flash-thinking-plus",    "name": "Gemini 3 Flash Thinking Plus",      "default": False},
+    {"id": "gemini-3-pro-advanced",           "name": "Gemini 3 Pro Advanced",             "default": False},
+    {"id": "gemini-3-flash-advanced",         "name": "Gemini 3 Flash Advanced",           "default": False},
+    {"id": "gemini-3-flash-thinking-advanced","name": "Gemini 3 Flash Thinking Advanced",  "default": False},
+]
+
+DEFAULT_MODEL = "unspecified"
+
+
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
     psid_len = len(_cookies["secure_1psid"])
     return {"status": "ok", "configured": psid_len > 0, "psid_len": psid_len}
+
+
+# ── Model display name helper ──────────────────────────────────────────────────
+
+def _build_model_display_name(model_obj: Any) -> str:
+    """Xây dựng tên hiển thị đầy đủ từ model_name (gemini-webapi trả tên ngắn)."""
+    model_name: str = getattr(model_obj, "model_name", "") or ""
+    # Mapping model_name → tên đẹp
+    _NAME_MAP = {
+        "unspecified":                       "Unspecified (default)",
+        "gemini-3-pro":                      "Gemini 3 Pro",
+        "gemini-3-flash":                    "Gemini 3 Flash",
+        "gemini-3-flash-thinking":           "Gemini 3 Flash Thinking",
+        "gemini-3-pro-plus":                 "Gemini 3 Pro Plus",
+        "gemini-3-flash-plus":               "Gemini 3 Flash Plus",
+        "gemini-3-flash-thinking-plus":      "Gemini 3 Flash Thinking Plus",
+        "gemini-3-pro-advanced":             "Gemini 3 Pro Advanced",
+        "gemini-3-flash-advanced":           "Gemini 3 Flash Advanced",
+        "gemini-3-flash-thinking-advanced":  "Gemini 3 Flash Thinking Advanced",
+    }
+    if model_name in _NAME_MAP:
+        return _NAME_MAP[model_name]
+    # Fallback: dùng display_name nếu có, không thì dùng model_name
+    display = getattr(model_obj, "display_name", None)
+    if display and len(display) > 3:
+        # Nếu display_name không bắt đầu bằng "Gemini" thì prefix vào
+        if not display.lower().startswith("gemini"):
+            return f"Gemini {display}"
+        return display
+    return model_name
+
+
+@app.get("/models")
+async def list_models():
+    """Trả về danh sách Gemini model — discover động từ client nếu có, fallback nếu chưa init."""
+    global _client
+    # Thử lấy danh sách model trực tiếp từ client (đã init)
+    async with _client_lock:
+        client = _client
+    if client is not None:
+        try:
+            models_raw = client.list_models()
+            if models_raw:
+                models = [
+                    {
+                        "id": m.model_name,
+                        "name": _build_model_display_name(m),
+                        "default": m.model_name == DEFAULT_MODEL,
+                    }
+                    for m in models_raw
+                ]
+                return {"models": models, "source": "dynamic"}
+        except Exception as e:
+            logger.warning("Không lấy được danh sách model động: %s", e)
+    return {"models": GEMINI_MODELS_FALLBACK, "source": "fallback"}
 
 
 @app.post("/configure")
@@ -211,9 +290,12 @@ async def debug_auth():
 @app.post("/chat", response_model=ChatResponse)
 async def chat(
     prompt: str = Form(...),
+    model: str = Form(default=""),
     files: list[UploadFile] = File(default=[]),
 ):
-    """Chat với Gemini. files là binary upload (không dùng base64)."""
+    """Chat với Gemini. files là binary upload (không dùng base64).
+    model: tên model muốn dùng (để trống = dùng default gemini-2.0-flash).
+    """
     # Dùng temp file với extension đúng để MIME type được detect chính xác.
     # io.BytesIO không có filename → thư viện đặt tên random .txt → MIME sai → Gemini không nhận ra ảnh.
     temp_paths: list[str] = []
@@ -239,6 +321,8 @@ async def chat(
         kwargs: dict[str, Any] = {"temporary": True}
         if temp_paths:
             kwargs["files"] = temp_paths
+        if model:
+            kwargs["model"] = model
 
         response = None
         last_exc: Exception | None = None

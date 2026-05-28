@@ -35,6 +35,7 @@ class LLMConfig(BaseModel):
     lm_studio_model: str
     gemini_web_secure_1psid: str
     gemini_web_secure_1psidts: str
+    gemini_web_model: str
     deepseek_api_key: str
     deepseek_model: str
     active_base_url: str
@@ -47,6 +48,7 @@ class SwitchProviderRequest(BaseModel):
     lm_studio_model: str | None = None
     gemini_web_secure_1psid: str | None = None
     gemini_web_secure_1psidts: str | None = None
+    gemini_web_model: str | None = None
     deepseek_api_key: str | None = None
     deepseek_model: str | None = None
 
@@ -72,7 +74,7 @@ async def get_llm_config(current_admin: CurrentAdminUser):
         active_model = rc.lm_studio_model
     elif rc.llm_provider == "gemini_web":
         active_url = "https://gemini.google.com"
-        active_model = "gemini-web"
+        active_model = rc.gemini_web_model
     elif rc.llm_provider == "deepseek":
         import os
         active_url = os.getenv("DEEPSEEK_PROXY_URL", "http://deepseek-proxy:8002")
@@ -89,6 +91,7 @@ async def get_llm_config(current_admin: CurrentAdminUser):
         lm_studio_model=rc.lm_studio_model,
         gemini_web_secure_1psid=rc.gemini_web_secure_1psid,
         gemini_web_secure_1psidts=rc.gemini_web_secure_1psidts,
+        gemini_web_model=rc.gemini_web_model,
         deepseek_api_key=rc.deepseek_api_key,
         deepseek_model=rc.deepseek_model,
         active_base_url=active_url,
@@ -128,6 +131,9 @@ async def switch_provider(req: SwitchProviderRequest, current_admin: CurrentAdmi
             from services.gemini_web_service import configure as _configure_proxy
             await _configure_proxy(psid, psidts or "")
 
+        if req.gemini_web_model is not None:
+            rc.set_gemini_web_model(req.gemini_web_model, db, current_admin.id)
+
         if req.deepseek_api_key is not None or req.deepseek_model is not None:
             api_key = req.deepseek_api_key if req.deepseek_api_key is not None else rc.deepseek_api_key
             model = req.deepseek_model if req.deepseek_model is not None else rc.deepseek_model
@@ -159,12 +165,12 @@ async def test_llm_provider(current_admin: CurrentAdminUser):
         start = time.monotonic()
         try:
             from services.gemini_web_service import chat as _gemini_chat
-            text = await _gemini_chat("Reply with one word: OK")
+            text = await _gemini_chat("State your exact model name and version number only, nothing else.", model=runtime_config.gemini_web_model)
             latency_ms = round((time.monotonic() - start) * 1000, 1)
             return TestResult(
                 provider="gemini_web",
                 base_url="https://gemini.google.com",
-                model="gemini-web",
+                model=runtime_config.gemini_web_model,
                 success=True,
                 latency_ms=latency_ms,
                 response_preview=text[:200],
@@ -174,7 +180,7 @@ async def test_llm_provider(current_admin: CurrentAdminUser):
             return TestResult(
                 provider="gemini_web",
                 base_url="https://gemini.google.com",
-                model="gemini-web",
+                model=runtime_config.gemini_web_model,
                 success=False,
                 latency_ms=latency_ms,
                 error=str(exc),
@@ -186,8 +192,8 @@ async def test_llm_provider(current_admin: CurrentAdminUser):
         model = runtime_config.deepseek_model
         payload: dict = {
             "model": model,
-            "messages": [{"role": "user", "content": "Reply with one word: OK"}],
-            "max_tokens": 10,
+            "messages": [{"role": "user", "content": "What is your exact model version? Reply in one short sentence."}],
+            "max_tokens": 60,
             "temperature": 0.0,
         }
         start = time.monotonic()
@@ -222,8 +228,8 @@ async def test_llm_provider(current_admin: CurrentAdminUser):
         model = runtime_config.lm_studio_model
         payload: dict = {
             "model": model,
-            "messages": [{"role": "user", "content": "Reply with one word: OK"}],
-            "max_tokens": 10,
+            "messages": [{"role": "user", "content": "What is your exact model version? Reply in one short sentence."}],
+            "max_tokens": 60,
             "temperature": 0.0,
             "thinking": {"type": "disabled"},
         }
@@ -232,8 +238,8 @@ async def test_llm_provider(current_admin: CurrentAdminUser):
         model = runtime_config.llama_model
         payload = {
             "model": model,
-            "messages": [{"role": "user", "content": "Reply with one word: OK"}],
-            "max_tokens": 10,
+            "messages": [{"role": "user", "content": "What is your exact model version? Reply in one short sentence."}],
+            "max_tokens": 60,
             "temperature": 0.0,
             "chat_template_kwargs": {"thinking": False},
         }
@@ -271,7 +277,24 @@ async def list_models(current_admin: CurrentAdminUser):
     """
     Gọi GET /v1/models từ provider hiện tại.
     LM Studio trả về danh sách models đã load.
+    Gemini Web trả về danh sách model cố định từ proxy.
     """
+    if runtime_config.llm_provider == "gemini_web":
+        import os
+        proxy_url = os.getenv("GEMINI_PROXY_URL", "http://gemini-proxy:8001")
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{proxy_url}/models")
+                resp.raise_for_status()
+                data = resp.json()
+                # Normalise sang format chung: {models: [{id, name, default}]}
+                return {
+                    "models": data.get("models", []),
+                    "current_model": runtime_config.gemini_web_model,
+                }
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Không thể kết nối gemini-proxy: {exc}")
+
     if runtime_config.llm_provider == "lm_studio":
         base_url = runtime_config.lm_studio_base_url
     else:

@@ -29,6 +29,7 @@ _DEFAULTS: dict[str, Any] = {
     "llm.llama_model":                 "gemma4-e4b",
     "llm.gemini_web_secure_1psid":     "",
     "llm.gemini_web_secure_1psidts":   "",
+    "llm.gemini_web_model":            "unspecified",
     "llm.deepseek_api_key":            "",
     "llm.deepseek_model":              "deepseek-chat",
 }
@@ -109,6 +110,14 @@ class RuntimeConfig:
         return self._data.get("llm.gemini_web_secure_1psidts", "")
 
     @property
+    def gemini_web_model(self) -> str:
+        val = self._data.get("llm.gemini_web_model", "unspecified")
+        # Migrate old gemini-1.x / gemini-2.x names → unspecified (không còn hợp lệ)
+        if val and (val.startswith("gemini-1.") or val.startswith("gemini-2.")):
+            val = "unspecified"
+        return val
+
+    @property
     def deepseek_api_key(self) -> str:
         return self._data.get("llm.deepseek_api_key", "")
 
@@ -141,6 +150,10 @@ class RuntimeConfig:
         self._data["llm.gemini_web_secure_1psidts"] = secure_1psidts
         self._save_to_db(db, "llm.gemini_web_secure_1psid", secure_1psid, user_id)
         self._save_to_db(db, "llm.gemini_web_secure_1psidts", secure_1psidts, user_id)
+
+    def set_gemini_web_model(self, model: str, db: Session, user_id: int | None = None) -> None:
+        self._data["llm.gemini_web_model"] = model
+        self._save_to_db(db, "llm.gemini_web_model", model, user_id)
 
     def set_deepseek_config(
         self,

@@ -45,7 +45,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         
         # Skip rate limiting for certain endpoints
-        skip_endpoints = ["/docs", "/redoc", "/openapi.json", "/api/health"]
+        skip_endpoints = ["/docs", "/redoc", "/openapi.json", "/api/health",
+                          "/api/auth/login", "/api/auth/refresh", "/api/auth/logout"]
         if request.url.path in skip_endpoints:
             return await call_next(request)
         

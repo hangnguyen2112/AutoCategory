@@ -83,17 +83,18 @@ async def _chat(system: str, user_content: Any, max_tokens: int = 512) -> str:
     # ── Gemini Web branch ───────────────────────────────────────────────────────
     if runtime_config.llm_provider == "gemini_web":
         from services.gemini_web_service import chat as _gemini_chat
-        # user_content có thể là str hoặc list (multipart)
+        _gmodel = runtime_config.gemini_web_model
+        # user_content ó thể là str hoặc list (multipart)
         # Với text-only: ghép system + user thành 1 prompt
         if isinstance(user_content, str):
             prompt = f"{system}\n\n{user_content}"
-            return await _gemini_chat(prompt)
+            return await _gemini_chat(prompt, model=_gmodel)
         # Multipart (có ảnh): extract text, ảnh xử lý riêng qua image_analyzer
         text_parts = " ".join(
             p["text"] for p in user_content if isinstance(p, dict) and p.get("type") == "text"
         )
         prompt = f"{system}\n\n{text_parts}"
-        return await _gemini_chat(prompt)
+        return await _gemini_chat(prompt, model=_gmodel)
     # ───────────────────────────────────────────────────────────────
     client, model = get_llm_client()
     # LM Studio thinking models dùng thêm ~600-900 tokens cho reasoning
@@ -169,7 +170,7 @@ async def post_completions_with_retry(payload: dict) -> dict:
                                 image_urls.append(url)
         prompt = f"{system_text}\n\n{user_text}" if system_text else user_text
         # Proxy tự download ảnh — chỉ cần gửi URLs
-        text = await _gemini_chat(prompt, image_urls=image_urls or None)
+        text = await _gemini_chat(prompt, image_urls=image_urls or None, model=runtime_config.gemini_web_model)
         # Wrap result in OpenAI-compat shape so callers can use ["choices"][0]["message"]["content"]
         return {"choices": [{"message": {"content": text}, "finish_reason": "stop"}]}
 
@@ -605,10 +606,13 @@ async def suggest_field_values(
         for f in batch:
             opts = f.get("field_options") or []
             if opts:
-                # Show up to 50 options for detected fields, fall back to 15 for unfiltered large lists
-                # After _prefilter_conditional_fields, brand-matched fields keep all options (≤50 shown);
-                # unmatched fallback fields still cap at 15 to protect the 8192-token limit.
-                max_opts = min(len(opts), 50) if len(opts) <= 50 else 15
+                # Conditional fields (parent_field_id set) đã được _prefilter chọn đúng brand
+                # → gửi toàn bộ options (cap 300) để LLM có thể match đúng model.
+                # Non-conditional hoặc unfiltered large lists → cap 15 để bảo vệ token limit.
+                if f.get("parent_field_id") is not None:
+                    max_opts = min(len(opts), 300)
+                else:
+                    max_opts = min(len(opts), 50) if len(opts) <= 50 else 15
                 opts_str = ", ".join(f"'{o.get('value')}' ({o.get('label')})" for o in opts[:max_opts])
                 fields_text_parts.append(
                     f"- {f['field_key']} [{f['field_type']}] \"{f['field_label']}\": options=[{opts_str}]"

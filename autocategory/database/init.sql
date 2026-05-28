@@ -333,8 +333,8 @@ CREATE TRIGGER update_system_config_updated_at BEFORE UPDATE ON system_config
 INSERT INTO users (username, email, password_hash, full_name, role, is_active)
 VALUES (
     'admin',
-    'admin@autocategory.local',
-    '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5ND6mKmP/Odiq',  -- bcrypt hash of 'admin123'
+    'admin@autocategory.example',
+    '$2a$12$hzMnl55X7qzSDgDkmgBJ2eEQPti3iNMQLDTrQx3X7QOxski3U/fzy',  -- bcrypt hash of 'admin123'
     'System Administrator',
     'admin',
     TRUE
