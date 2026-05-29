@@ -69,7 +69,7 @@ export const logsAPI = {
   list: (params) => api.get('/admin/logs/requests', { params }),
   get: (id) => api.get(`/admin/logs/requests/${id}`),
   stats: (params) => api.get('/admin/logs/stats', { params }),
-  cleanup: (params) => api.delete('/admin/logs/cleanup', { params }),
+  cleanup: (params) => api.delete('/admin/logs/requests/cleanup', { params }),
 }
 
 // Training Data API
