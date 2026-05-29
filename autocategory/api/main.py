@@ -80,8 +80,8 @@ app.add_middleware(
 # Rate limiting middleware
 app.add_middleware(RateLimitMiddleware)
 
-# Request logging middleware
-app.add_middleware(RequestLoggingMiddleware)
+# Request logging middleware (disabled - uncomment to re-enable DB request logging)
+# app.add_middleware(RequestLoggingMiddleware)
 
 # Include routers
 app.include_router(auth.router, tags=["Authentication"])

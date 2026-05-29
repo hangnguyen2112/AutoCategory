@@ -358,6 +358,79 @@ Before deploying to production:
 - [ ] Configure log rotation
 - [ ] Set DATA_RETENTION_DAYS appropriately
 
+## 🧹 Dọn dẹp ổ cứng (Disk Cleanup)
+
+### Xóa toàn bộ log container đang chạy
+```powershell
+# Xem dung lượng log hiện tại của từng container
+docker ps -q | ForEach-Object { docker inspect --format='{{.LogPath}}' $_ } | ForEach-Object { if ($_) { Get-Item $_ | Select-Object FullName, @{N='SizeMB';E={[math]::Round($_.Length/1MB,2)}} } }
+
+# Truncate log của tất cả container (không cần stop)
+docker ps -q | ForEach-Object { $log = docker inspect --format='{{.LogPath}}' $_; if ($log) { Clear-Content $log } }
+```
+
+### Xóa image build cũ / dangling
+```powershell
+# Xóa image không dùng (dangling - không có tag)
+docker image prune -f
+
+# Xóa tất cả image không được dùng bởi container nào (mạnh hơn)
+docker image prune -a -f
+
+# Xóa build cache
+docker builder prune -f
+
+# Xóa tất cả cùng lúc: stopped containers + dangling images + unused networks + build cache
+docker system prune -f
+
+# Mạnh nhất: bao gồm cả volume không dùng (CẢNH BÁO: mất dữ liệu volume!)
+# docker system prune -a --volumes -f
+```
+
+### Xóa request_log cũ trong PostgreSQL (nếu đã tắt logging middleware)
+```powershell
+# Kết nối vào postgres container
+docker exec -it autocategory_postgres psql -U autocategory -d autocategory
+
+# Trong psql: xóa tất cả log không có feedback (giữ lại bản ghi có user correction)
+# DELETE FROM request_logs WHERE was_corrected = false AND created_at < NOW() - INTERVAL '30 days';
+
+# Xóa toàn bộ nếu không cần nữa
+# TRUNCATE TABLE request_logs;
+# \q
+```
+
+### Định kỳ chạy (hàng tuần)
+```powershell
+# Script dọn dẹp nhanh - chạy khi cần giải phóng dung lượng
+docker image prune -f
+docker builder prune -f
+docker container prune -f
+```
+
+### Kiểm tra dung lượng Docker đang dùng
+```powershell
+docker system df
+```
+
+---
+
+## ⚠️ Lưu ý ổ C (nếu Docker đã chuyển sang ổ D)
+
+Ngay cả khi Docker data root đã chuyển sang ổ D, các thư mục sau vẫn có thể phát sinh trên **ổ C**:
+
+| Đường dẫn ổ C | Nội dung | Cách xóa |
+|---------------|----------|----------|
+| `C:\Users\<user>\AppData\Local\Docker\` | Docker Desktop settings, credentials | Không nên xóa |
+| `C:\Users\<user>\.docker\` | Docker config, login tokens | Không nên xóa |
+| `C:\Windows\Temp\` | Temp files từ Docker operations | `Remove-Item C:\Windows\Temp\* -Recurse -Force -ErrorAction SilentlyContinue` |
+| `C:\Users\<user>\AppData\Local\Temp\` | User temp | `Remove-Item $env:TEMP\* -Recurse -Force -ErrorAction SilentlyContinue` |
+
+Kiểm tra Docker data root đang ở đâu:
+```powershell
+docker info | Select-String "Docker Root Dir"
+```
+
 ## Support
 
 For issues or questions:

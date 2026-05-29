@@ -1,11 +1,19 @@
 version: "3.9"
 
+# Giới hạn log Docker cho tất cả container (tránh đầy ổ cứng)
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
 
   llama-server:
     image: ghcr.io/ggml-org/llama.cpp:server
     container_name: autocategory_llama
     restart: unless-stopped
+    logging: *default-logging
     environment:
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     volumes:
@@ -34,6 +42,7 @@ services:
     image: qdrant/qdrant:latest
     container_name: autocategory_qdrant
     restart: unless-stopped
+    logging: *default-logging
     environment:
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     volumes:
@@ -51,6 +60,7 @@ services:
     image: postgres:16-alpine
     container_name: autocategory_postgres
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_DB: autocategory
       POSTGRES_USER: ${POSTGRES_USER:-autocategory}
@@ -73,6 +83,7 @@ services:
     image: redis:7-alpine
     container_name: autocategory_redis
     restart: unless-stopped
+    logging: *default-logging
     environment:
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     volumes:
@@ -92,6 +103,7 @@ services:
       dockerfile: Dockerfile
     container_name: autocategory_api
     restart: unless-stopped
+    logging: *default-logging
     env_file: .env
     environment:
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
@@ -135,6 +147,7 @@ services:
       dockerfile: Dockerfile
     container_name: autocategory_admin
     restart: unless-stopped
+    logging: *default-logging
     environment:
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     depends_on:
@@ -147,6 +160,7 @@ services:
       dockerfile: Dockerfile
     container_name: autocategory_gemini_proxy
     restart: unless-stopped
+    logging: *default-logging
     environment:
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
       GEMINI_COOKIE_PATH: /app/gemini_cookies
@@ -165,6 +179,7 @@ services:
       dockerfile: Dockerfile
     container_name: autocategory_deepseek_proxy
     restart: unless-stopped
+    logging: *default-logging
     environment:
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
@@ -194,6 +209,7 @@ services:
     image: cloudflare/cloudflared:latest
     container_name: autocategory_tunnel
     restart: unless-stopped
+    logging: *default-logging
     command: tunnel --config /cf-runtime/config.yml run
     volumes:
       - cf_runtime:/cf-runtime:ro
@@ -207,6 +223,7 @@ services:
     image: nginx:alpine
     container_name: autocategory_nginx
     restart: unless-stopped
+    logging: *default-logging
     environment:
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     ports:
