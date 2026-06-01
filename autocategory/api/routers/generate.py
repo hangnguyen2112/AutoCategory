@@ -407,7 +407,7 @@ async def generate_stream(req: GenerateStreamRequest, db: Session = Depends(get_
                     )
                 yield _sse({
                     "step": "attributes",
-                    "attributes": attributes,
+                    # "attributes": attributes,
                     "selected_values": selected_values,
                 })
             except Exception as exc:

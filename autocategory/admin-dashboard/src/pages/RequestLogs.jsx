@@ -269,12 +269,12 @@ export default function RequestLogs() {
   }
 
   const handleCleanup = async () => {
-    if (!confirm('Delete logs older than 30 days?')) return
+    if (!confirm('Delete ALL request logs? This action cannot be undone.')) return
 
     try {
       toast.loading('Cleaning up...', { id: 'cleanup' })
-      await logsAPI.cleanup({ days: 30 })
-      toast.success('Old logs deleted!', { id: 'cleanup' })
+      await logsAPI.cleanup({ days_to_keep: 0 })
+      toast.success('All logs deleted!', { id: 'cleanup' })
       fetchData()
     } catch (error) {
       toast.error('Cleanup failed!', { id: 'cleanup' })

@@ -248,20 +248,29 @@ async def get_request_stats(
 async def cleanup_old_logs(
     current_admin: CurrentAdminUser,
     db: Session = Depends(get_db),
-    days_to_keep: int = Query(90, ge=1, le=365)
+    days_to_keep: int = Query(0, ge=0, le=365)
 ):
     """
-    Delete old request logs
+    Delete request logs. When days_to_keep=0 (default), deletes ALL logs.
+    When days_to_keep>0, deletes logs older than that many days.
     """
+    if days_to_keep == 0:
+        deleted_count = db.query(RequestLog).delete()
+        db.commit()
+        return {
+            "message": f"Deleted all {deleted_count} request logs",
+            "cutoff_date": None
+        }
+
     cutoff_date = datetime.utcnow() - timedelta(days=days_to_keep)
-    
+
     deleted_count = db.query(RequestLog).filter(
         RequestLog.created_at < cutoff_date
     ).delete()
-    
+
     db.commit()
-    
+
     return {
-        "message": f"Deleted {deleted_count} old request logs",
+        "message": f"Deleted {deleted_count} request logs older than {days_to_keep} days",
         "cutoff_date": cutoff_date.isoformat()
     }
