@@ -29,7 +29,7 @@ def _flatten_categories(
             "id": cat["id"],
             "name": cat["name"],
             "slug": cat.get("slug", ""),
-            "description": cat.get("name", ""),
+            "description": cat.get("description") or "",
             "icon": cat.get("icon") or "fas fa-folder",
             "image": cat.get("image"),
             "parent_id": cat.get("parent_id") or parent_id,
@@ -113,7 +113,7 @@ async def sync_categories_from_omni(base_url: str, db: Session) -> dict[str, Any
             db.query(Category).filter(Category.id == cat["id"]).update({
                 "name": cat["name"],
                 "slug": cat["slug"],
-                "description": cat["description"],
+                "description": cat["description"],  # lấy trực tiếp từ API omni (trường description)
                 "icon": cat["icon"],
                 "image": cat["image"],
                 "parent_id": cat["parent_id"],

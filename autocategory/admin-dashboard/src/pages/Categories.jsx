@@ -377,10 +377,7 @@ function OmniSyncPanel({ onSynced }) {
   const [omniUrl, setOmniUrl] = useState('')
   const [syncMode, setSyncMode] = useState('manual') // 'manual' | 'auto'
   const [syncType, setSyncType] = useState('full')   // 'categories' | 'attributes' | 'full'
-  const [generateDesc, setGenerateDesc] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [loadingDesc, setLoadingDesc] = useState(false)
-  const [descProgress, setDescProgress] = useState(null)
   const [lastResult, setLastResult] = useState(null)
   const [configLoaded, setConfigLoaded] = useState(false)
 
@@ -394,22 +391,6 @@ function OmniSyncPanel({ onSynced }) {
       .catch(() => setConfigLoaded(true))
   }, [])
 
-  const handleGenerateDescriptions = async (force = false) => {
-    setLoadingDesc(true)
-    setDescProgress(force ? 'Đang sinh lại mô tả (toàn bộ)...' : 'Đang sinh mô tả tối ưu cho vector search...')
-    try {
-      const res = await categoriesAPI.generateDescriptions({ force })
-      const r = res.data
-      setDescProgress(null)
-      toast.success(`Đã sinh mô tả cho ${r.updated} danh mục (bỏ qua ${r.skipped})`)
-    } catch (e) {
-      setDescProgress(null)
-      toast.error('Lỗi sinh mô tả: ' + (e.response?.data?.detail || e.message))
-    } finally {
-      setLoadingDesc(false)
-    }
-  }
-
   const handleSync = async () => {
     if (!omniUrl.trim()) {
       toast.error('Nhập Base URL của API omni trước!')
@@ -422,12 +403,6 @@ function OmniSyncPanel({ onSynced }) {
       setLastResult(res.data.result)
       toast.success('Đồng bộ từ omni thành công!')
       onSynced?.()
-
-      if (generateDesc) {
-        setLoading(false)
-        await handleGenerateDescriptions(false)
-        return
-      }
     } catch (e) {
       const msg = e.response?.data?.detail || e.message
       toast.error('Lỗi đồng bộ: ' + msg)
@@ -510,31 +485,7 @@ function OmniSyncPanel({ onSynced }) {
           </div>
         )}
 
-        {/* AI description option */}
-        <label className="flex items-start gap-3 cursor-pointer bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-3">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={generateDesc}
-            onChange={(e) => setGenerateDesc(e.target.checked)}
-          />
-          <div>
-            <div className="text-sm font-medium text-purple-800 dark:text-purple-300">
-              🤖 Tự sinh mô tả đầy đủ bằng AI sau khi đồng bộ
-            </div>
-            <div className="text-xs text-purple-600 dark:text-purple-400 mt-0.5">
-              Dùng LLM để viết lại description phong phú cho từng danh mục (API omni thường có mô tả sơ sài). Mất thêm vài phút.
-            </div>
-          </div>
-        </label>
-
-        {/* AI description progress */}
-        {descProgress && (
-          <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-3 text-sm text-purple-700 dark:text-purple-300 flex items-center gap-2">
-            <RefreshCw className="h-4 w-4 animate-spin flex-shrink-0" />
-            {descProgress}
-          </div>
-        )}
+        {/* AI description option — đã bỏ; mô tả lấy trực tiếp từ API omni (trường description) */}
 
         {/* Last result */}
         {lastResult && (
@@ -559,9 +510,9 @@ function OmniSyncPanel({ onSynced }) {
         <div className="flex gap-2">
           <button
             onClick={handleSync}
-            disabled={loading || loadingDesc}
+            disabled={loading}
             className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium text-white transition-all
-              ${(loading || loadingDesc) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+              ${loading ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
           >
             {loading ? (
               <RefreshCw className="h-4 w-4 animate-spin" />
@@ -569,25 +520,6 @@ function OmniSyncPanel({ onSynced }) {
               <Globe className="h-4 w-4" />
             )}
             {loading ? 'Đang đồng bộ...' : 'Đồng bộ ngay'}
-          </button>
-          <button
-            onClick={() => handleGenerateDescriptions(false)}
-            disabled={loading || loadingDesc}
-            title="Sinh keyword-dense description cho các danh mục chưa có/còn sơ sài (phục vụ vector search)"
-            className={`flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-white transition-all
-              ${(loading || loadingDesc) ? 'bg-purple-400 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700'}`}
-          >
-            {loadingDesc ? <RefreshCw className="h-4 w-4 animate-spin" /> : '🤖'}
-            {loadingDesc ? '' : 'Sinh mô tả'}
-          </button>
-          <button
-            onClick={() => handleGenerateDescriptions(true)}
-            disabled={loading || loadingDesc}
-            title="Sinh lại toàn bộ — ghi đè mô tả cũ (kể cả mô tả marketing không tối ưu)"
-            className={`flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium transition-all
-              ${(loading || loadingDesc) ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
-          >
-            ↺ Sinh lại tất cả
           </button>
         </div>
       </div>
