@@ -414,7 +414,7 @@ async def rerank_categories(
     candidates: list[dict[str, Any]],
 ) -> dict[str, Any]:
     candidates_text = "\n".join(
-        f"- id={c['category_id']} | {c.get('path', c.get('name'))}"
+        f"- id={c['category_id']} | {c.get('path', c.get('name'))} | {c.get('description', '')}"
         for c in candidates
     )
 

@@ -89,7 +89,7 @@ async def get_system_health(
     try:
         from services.qdrant_service import QdrantService
         qdrant = QdrantService()
-        collections = qdrant.client.get_collections()
+        collections = await qdrant.client.get_collections()
         services.append(ServiceStatus(
             name="qdrant",
             status="healthy",

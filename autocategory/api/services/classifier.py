@@ -3,7 +3,6 @@ Classifier – pipeline chính tích hợp tất cả service.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, Literal
 
@@ -78,26 +77,25 @@ async def classify_product(
         product_vector = await embedder.embed_single(product_embedding_text)
         understand_conf: float = 0.5
     else:
-        # Step 1+3 – Product understanding & embed raw text in parallel
-        raw_embed_text = f"Tiêu đề gốc: {title}\nMô tả gốc: {description}".strip()
-        understanding, product_vector = await asyncio.gather(
-            llm_service.understand_product(
-                title=title,
-                description=description,
-                price=price,
-                image_urls=image_urls,
-            ),
-            embedder.embed_single(raw_embed_text),
+        # Step 1 – Product understanding
+        understanding = await llm_service.understand_product(
+            title=title,
+            description=description,
+            price=price,
+            image_urls=image_urls,
         )
         understand_conf = understanding.get("confidence", 0.5)
 
-    # Step 2 – Build embedding text (for context in rerank prompt)
-    normalized_text: str = understanding.get("normalized_product_text", title)
-    product_embedding_text = (
-        f"Tiêu đề gốc: {title}\n"
-        f"Mô tả gốc: {description}\n"
-        f"Nội dung chuẩn hóa: {normalized_text}"
-    ).strip() if not fast else product_embedding_text
+        # Step 2 – Build enriched embedding text từ kết quả understanding
+        normalized_text: str = understanding.get("normalized_product_text", title)
+        product_embedding_text = (
+            f"Tiêu đề gốc: {title}\n"
+            f"Mô tả gốc: {description}\n"
+            f"Nội dung chuẩn hóa: {normalized_text}"
+        ).strip()
+
+        # Step 3 – Embed product_embedding_text (đã có normalized text)
+        product_vector = await embedder.embed_single(product_embedding_text)
 
     # Step 4 – Vector search
     top_k = 20 if fast else (30 if understand_conf < 0.75 else 20)
@@ -114,30 +112,13 @@ async def classify_product(
             "selected_category": None,
         }
 
-    top1 = candidates[0]
-    top2_sim: float = candidates[1].get("similarity_score", 0.0) if len(candidates) > 1 else 0.0
-    top1_sim: float = top1.get("similarity_score", 0.0)
-    margin = top1_sim - top2_sim
-
-    # Shortcut: vector đã chắc chắn, bỏ qua LLM rerank
-    if top1_sim >= 0.57 and margin >= 0.06:
-        rerank = {
-            "category_id": top1["category_id"],
-            "confidence": round(min(top1_sim + 0.05, 0.99), 4),
-            "reason": "vector similarity high, rerank skipped",
-            "alternatives": [
-                {"category_id": c["category_id"], "confidence": round(c.get("similarity_score", 0.0), 4)}
-                for c in candidates[1:3]
-            ],
-        }
-    else:
-        # Step 5 – LLM rerank với top 5
-        rerank = await llm_service.rerank_categories(
-            product_embedding_text=product_embedding_text,
-            understanding_confidence=understand_conf,
-            text_image_consistency=understanding.get("text_image_consistency", "unknown"),
-            candidates=candidates[:5],
-        )
+    # Step 5 – LLM rerank với top 20
+    rerank = await llm_service.rerank_categories(
+        product_embedding_text=product_embedding_text,
+        understanding_confidence=understand_conf,
+        text_image_consistency=understanding.get("text_image_consistency", "unknown"),
+        candidates=candidates[:20],
+    )
 
     # Step 6 – Threshold
     decision = _apply_threshold(understanding, candidates, rerank)
