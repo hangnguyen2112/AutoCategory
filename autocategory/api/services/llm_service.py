@@ -110,6 +110,8 @@ async def _chat(system: str, user_content: Any, max_tokens: int = 512) -> str:
         "temperature": 0.1,
         "max_tokens": effective_max_tokens,
     }
+    if runtime_config.llm_provider == "deepseek":
+        payload["thinking"] = {"type": "disabled"}
     for attempt in range(2):
         try:
             resp = await client.post("/v1/chat/completions", json=payload)
@@ -125,6 +127,8 @@ async def _chat(system: str, user_content: Any, max_tokens: int = 512) -> str:
             _clients.pop(stale_url, None)
             client, new_model = get_llm_client()
             payload["model"] = new_model
+            if runtime_config.llm_provider == "deepseek":
+                payload["thinking"] = {"type": "disabled"}
     raise RuntimeError("unreachable")
 
 
@@ -176,6 +180,8 @@ async def post_completions_with_retry(payload: dict) -> dict:
 
     client, model = get_llm_client()
     payload.setdefault("model", model)
+    if runtime_config.llm_provider == "deepseek":
+        payload.setdefault("thinking", {"type": "disabled"})
     for attempt in range(2):
         try:
             resp = await client.post("/v1/chat/completions", json=payload)
@@ -189,6 +195,8 @@ async def post_completions_with_retry(payload: dict) -> dict:
             _clients.pop(stale_url, None)
             client, new_model = get_llm_client()
             payload["model"] = new_model
+            if runtime_config.llm_provider == "deepseek":
+                payload["thinking"] = {"type": "disabled"}
     raise RuntimeError("unreachable")
 
 
@@ -324,7 +332,7 @@ async def extract_attribute_values(
         f'- {f["field_key"]}: {f.get("field_label", f["field_key"])}'
         for f in fields
     )
-    user_text = f"Tiêu đề: {title}\nMô tả: {description}\n\nCác thuộc tính cần điền:\n{field_lines}"
+    user_text = f"Các thuộc tính cần điền:\n{field_lines}\n\nThông tin sản phẩm cần phân tích:\nTiêu đề: {title}\nMô tả: {description}"
 
     try:
         raw = await _chat(SYSTEM_EXTRACT_ATTRS, user_text, max_tokens=256)
@@ -363,8 +371,8 @@ async def extract_attribute_values_direct(
             lines.append(f'- {f["field_key"]} "{f.get("field_label", "")}": điền tự do')
 
     user_text = (
-        f"Tiêu đề: {title}\nMô tả: {description or '(không có)'}\n\n"
-        f"Các thuộc tính cần điền:\n" + "\n".join(lines)
+        f"Các thuộc tính cần điền:\n" + "\n".join(lines) + "\n\n"
+        f"Thông tin sản phẩm cần phân tích:\nTiêu đề: {title}\nMô tả: {description or '(không có)'}"
     )
     try:
         raw = await _chat(SYSTEM_EXTRACT_DIRECT, user_text, max_tokens=256)
@@ -624,13 +632,14 @@ async def suggest_field_values(
 
         fields_text = "\n".join(fields_text_parts)
 
-        user_msg = f"""Ngày hôm nay: {today_str}
-Thông tin sản phẩm:
+        user_msg = f"""Các trường cần gợi ý giá trị:
+{fields_text}
+
+Thông tin ngày hôm nay: {today_str}{warranty_note}
+
+Thông tin sản phẩm cần phân tích:
 Tiêu đề: {title}
 Mô tả: {description or '(không có)'}
-
-Các trường cần gợi ý giá trị:
-{fields_text}{warranty_note}
 
 Hãy trả về JSON với key là field_key và value là giá trị phù hợp nhất (hoặc null nếu không đủ thông tin)."""
 

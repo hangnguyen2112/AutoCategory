@@ -195,6 +195,7 @@ async def test_llm_provider(current_admin: CurrentAdminUser):
             "messages": [{"role": "user", "content": "What is your exact model version? Reply in one short sentence."}],
             "max_tokens": 60,
             "temperature": 0.0,
+            "thinking": {"type": "disabled"},
         }
         start = time.monotonic()
         try:
