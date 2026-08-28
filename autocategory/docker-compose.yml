@@ -1,5 +1,3 @@
-version: "3.9"
-
 # Giới hạn log Docker cho tất cả container (tránh đầy ổ cứng)
 x-logging: &default-logging
   driver: "json-file"
@@ -8,35 +6,6 @@ x-logging: &default-logging
     max-file: "3"
 
 services:
-
-  llama-server:
-    image: ghcr.io/ggml-org/llama.cpp:server
-    container_name: autocategory_llama
-    restart: unless-stopped
-    logging: *default-logging
-    environment:
-      TZ: ${TZ:-Asia/Ho_Chi_Minh}
-    volumes:
-      - llama_models:/models
-    ports:
-      - "8080:8080"
-    command: >
-      --model /models/google-gemma-4-E4B-it-Q4_K_M.gguf
-      --mmproj /models/mmproj-BF16.gguf
-      --host 0.0.0.0
-      --port 8080
-      --ctx-size 8192
-      --n-predict 512
-      --log-disable
-      --jinja
-      --reasoning off
-      --chat-template-kwargs '{"enable_thinking":false}'
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'true < /dev/tcp/localhost/8080' 2>/dev/null"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 60s
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -48,7 +17,7 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     ports:
-      - "6333:6333"
+      - "127.0.0.1:6333:6333"
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'true < /dev/tcp/localhost/6333' 2>/dev/null"]
       interval: 10s
@@ -71,7 +40,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U autocategory"]
       interval: 10s
@@ -89,7 +58,7 @@ services:
     volumes:
       - redis_data:/data
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -111,11 +80,12 @@ services:
       OMNI_SYNC_MODE: ${OMNI_SYNC_MODE:-manual}
       OMNI_SYNC_INTERVAL_HOURS: ${OMNI_SYNC_INTERVAL_HOURS:-24}
       CATEGORY_ATTRIBUTES_JSON_PATH: /app/data/category_attributes.json
-      LLM_PROVIDER: ${LLM_PROVIDER:-lm_studio}
-      LM_STUDIO_BASE_URL: ${LM_STUDIO_BASE_URL:-http://host.docker.internal:11434}
-      LM_STUDIO_MODEL: ${LM_STUDIO_MODEL:-google/gemma-4-e4b}
-      GEMINI_PROXY_URL: http://gemini-proxy:8001
       DEEPSEEK_PROXY_URL: http://deepseek-proxy:8002
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
+      DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-10}
+      DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-1800}
+      DB_POOL_WARN_SECONDS: ${DB_POOL_WARN_SECONDS:-30}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -123,21 +93,17 @@ services:
       - ./api/logs:/app/logs
       - ./api/migrations:/app/migrations:ro
     depends_on:
-      llama-server:
-        condition: service_started
       qdrant:
         condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      gemini-proxy:
-        condition: service_healthy
       deepseek-proxy:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
-      interval: 20s
+      interval: 60s
       timeout: 5s
       retries: 5
 
@@ -154,25 +120,6 @@ services:
       api:
         condition: service_healthy
 
-  gemini-proxy:
-    build:
-      context: ./gemini-proxy
-      dockerfile: Dockerfile
-    container_name: autocategory_gemini_proxy
-    restart: unless-stopped
-    logging: *default-logging
-    environment:
-      TZ: ${TZ:-Asia/Ho_Chi_Minh}
-      GEMINI_COOKIE_PATH: /app/gemini_cookies
-    volumes:
-      - gemini_cookies:/app/gemini_cookies
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-
   deepseek-proxy:
     build:
       context: ./deepseek-proxy
@@ -186,7 +133,7 @@ services:
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/health')\""]
-      interval: 10s
+      interval: 60s
       timeout: 5s
       retries: 5
       start_period: 10s
@@ -218,6 +165,8 @@ services:
     depends_on:
       nginx:
         condition: service_started
+    profiles:
+      - tunnel
 
   nginx:
     image: nginx:alpine
@@ -238,9 +187,7 @@ services:
         condition: service_started
 
 volumes:
-  llama_models:
   qdrant_data:
   postgres_data:
   redis_data:
   cf_runtime:
-  gemini_cookies:

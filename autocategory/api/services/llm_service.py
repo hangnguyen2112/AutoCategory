@@ -1,7 +1,4 @@
-"""
-LLM service – gọi llama-server (llama.cpp) OpenAI-compat API.
-Hỗ trợ vision qua mmproj (image_url content type).
-"""
+"""DeepSeek LLM service through the local OpenAI-compatible proxy."""
 from __future__ import annotations
 
 import json
@@ -20,39 +17,40 @@ logger = logging.getLogger(__name__)
 _clients: dict[str, httpx.AsyncClient] = {}
 
 
+async def _evict_llm_client(client: httpx.AsyncClient) -> None:
+    """Remove and close a cached client after a broken connection."""
+    for base_url, cached in list(_clients.items()):
+        if cached is client:
+            _clients.pop(base_url, None)
+            break
+    await client.aclose()
+
+
+async def close_llm_clients() -> None:
+    """Close all pooled HTTP connections during application shutdown."""
+    clients = list({id(client): client for client in _clients.values()}.values())
+    _clients.clear()
+    for client in clients:
+        await client.aclose()
+
+
 def get_llm_client() -> tuple[httpx.AsyncClient, str]:
-    """
-    Returns (client, model_name) based on current runtime_config.llm_provider.
-    Clients are cached by base_url so connections are reused.
-    """
-    import os
-    if runtime_config.llm_provider == "lm_studio":
-        base_url = runtime_config.lm_studio_base_url
-        model = runtime_config.lm_studio_model
-    elif runtime_config.llm_provider == "deepseek":
-        base_url = os.getenv("DEEPSEEK_PROXY_URL", "http://deepseek-proxy:8002")
-        model = runtime_config.deepseek_model
-    else:  # default: llama
-        base_url = runtime_config.llama_base_url
-        model = runtime_config.llama_model
+    """Return the shared DeepSeek proxy client and configured model."""
+    base_url = settings.deepseek_proxy_url
+    model = runtime_config.deepseek_model
 
     if base_url not in _clients:
         _clients[base_url] = httpx.AsyncClient(base_url=base_url, timeout=180.0)
     return _clients[base_url], model
 
-
-def is_lm_studio() -> bool:
-    return runtime_config.llm_provider == "lm_studio"
-
-
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _extract_json(text: str) -> dict | None:
     """Trích JSON từ response text, bỏ qua markdown code fence nếu có."""
-    # Strip Gemma 4 reasoning blocks: <|channel>thought ... <channel|>
+    # Be tolerant of reasoning wrappers returned by compatible models.
     text = re.sub(r"<\|channel>thought.*?<channel\|>", "", text, flags=re.DOTALL)
     text = re.sub(r"<\|channel>thought.*$", "", text, flags=re.DOTALL).strip()
-    # Strip generic <think>...</think> blocks (llama.cpp style)
+    # Strip generic <think>...</think> blocks.
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
     text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL).strip()
     try:
@@ -80,26 +78,7 @@ def _build_user_content(text: str, image_urls: list[str] | None) -> Any:
 
 async def _chat(system: str, user_content: Any, max_tokens: int = 512) -> str:
     """Gọi /v1/chat/completions (OpenAI-compat). user_content có thể là str hoặc list."""
-    # ── Gemini Web branch ───────────────────────────────────────────────────────
-    if runtime_config.llm_provider == "gemini_web":
-        from services.gemini_web_service import chat as _gemini_chat
-        _gmodel = runtime_config.gemini_web_model
-        # user_content ó thể là str hoặc list (multipart)
-        # Với text-only: ghép system + user thành 1 prompt
-        if isinstance(user_content, str):
-            prompt = f"{system}\n\n{user_content}"
-            return await _gemini_chat(prompt, model=_gmodel)
-        # Multipart (có ảnh): extract text, ảnh xử lý riêng qua image_analyzer
-        text_parts = " ".join(
-            p["text"] for p in user_content if isinstance(p, dict) and p.get("type") == "text"
-        )
-        prompt = f"{system}\n\n{text_parts}"
-        return await _gemini_chat(prompt, model=_gmodel)
-    # ───────────────────────────────────────────────────────────────
     client, model = get_llm_client()
-    # LM Studio thinking models dùng thêm ~600-900 tokens cho reasoning
-    # nên cần budget lớn hơn để không bị cắt giữa JSON
-    effective_max_tokens = max(max_tokens, 1800) if is_lm_studio() else max_tokens
     payload: dict[str, Any] = {
         "model": model,
         "messages": [
@@ -108,10 +87,9 @@ async def _chat(system: str, user_content: Any, max_tokens: int = 512) -> str:
         ],
         "stream": False,
         "temperature": 0.1,
-        "max_tokens": effective_max_tokens,
+        "max_tokens": max_tokens,
+        "thinking": {"type": "disabled"},
     }
-    if runtime_config.llm_provider == "deepseek":
-        payload["thinking"] = {"type": "disabled"}
     for attempt in range(2):
         try:
             resp = await client.post("/v1/chat/completions", json=payload)
@@ -123,12 +101,10 @@ async def _chat(system: str, user_content: Any, max_tokens: int = 512) -> str:
                 raise
             logger.warning("LLM connection dropped, retrying with fresh client: %s", exc)
             # Evict stale cached client so get_llm_client() creates a new one
-            stale_url = str(client.base_url).rstrip("/")
-            _clients.pop(stale_url, None)
+            await _evict_llm_client(client)
             client, new_model = get_llm_client()
             payload["model"] = new_model
-            if runtime_config.llm_provider == "deepseek":
-                payload["thinking"] = {"type": "disabled"}
+            payload["thinking"] = {"type": "disabled"}
     raise RuntimeError("unreachable")
 
 
@@ -149,39 +125,10 @@ async def get_embeddings(texts: list[str]) -> list[list[float]] | None:
 
 async def post_completions_with_retry(payload: dict) -> dict:
     """POST /v1/chat/completions with one automatic retry on stale-connection errors.
-    Returns the full response JSON dict. Exported for use by image_analyzer.
-    For gemini_web: delegates to gemini_web_service (images downloaded as temp files)."""
-    if runtime_config.llm_provider == "gemini_web":
-        from services.gemini_web_service import chat as _gemini_chat
-        messages = payload.get("messages", [])
-        system_text = ""
-        user_text = ""
-        image_urls: list[str] = []
-        for msg in messages:
-            if msg["role"] == "system":
-                system_text = msg["content"] if isinstance(msg["content"], str) else ""
-            elif msg["role"] == "user":
-                content = msg["content"]
-                if isinstance(content, str):
-                    user_text = content
-                elif isinstance(content, list):
-                    for part in content:
-                        if part.get("type") == "text":
-                            user_text += part["text"]
-                        elif part.get("type") == "image_url":
-                            url = part.get("image_url", {}).get("url", "")
-                            if url:
-                                image_urls.append(url)
-        prompt = f"{system_text}\n\n{user_text}" if system_text else user_text
-        # Proxy tự download ảnh — chỉ cần gửi URLs
-        text = await _gemini_chat(prompt, image_urls=image_urls or None, model=runtime_config.gemini_web_model)
-        # Wrap result in OpenAI-compat shape so callers can use ["choices"][0]["message"]["content"]
-        return {"choices": [{"message": {"content": text}, "finish_reason": "stop"}]}
-
+    Returns the full response JSON dict. Exported for use by image_analyzer."""
     client, model = get_llm_client()
     payload.setdefault("model", model)
-    if runtime_config.llm_provider == "deepseek":
-        payload.setdefault("thinking", {"type": "disabled"})
+    payload.setdefault("thinking", {"type": "disabled"})
     for attempt in range(2):
         try:
             resp = await client.post("/v1/chat/completions", json=payload)
@@ -191,12 +138,10 @@ async def post_completions_with_retry(payload: dict) -> dict:
             if attempt == 1:
                 raise
             logger.warning("LLM connection dropped, retrying with fresh client: %s", exc)
-            stale_url = str(client.base_url).rstrip("/")
-            _clients.pop(stale_url, None)
+            await _evict_llm_client(client)
             client, new_model = get_llm_client()
             payload["model"] = new_model
-            if runtime_config.llm_provider == "deepseek":
-                payload["thinking"] = {"type": "disabled"}
+            payload["thinking"] = {"type": "disabled"}
     raise RuntimeError("unreachable")
 
 

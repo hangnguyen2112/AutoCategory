@@ -45,7 +45,11 @@ CF_API_TOKEN=your_cloudflare_api_token_here
 CF_ACCOUNT_ID=your_cloudflare_account_id_here
 CF_SUBDOMAIN=autocategory
 CF_DOMAIN=yourdomain.com
-CF_TUNNEL_NAME=autocategory
+CF_TUNNEL_NAME=autocategory-ha
+# Tùy chọn; để trống sẽ tự tìm chính xác theo CF_TUNNEL_NAME
+CF_TUNNEL_ID=
+CF_ORIGIN_SERVICE=http://nginx:80
+CF_CONNECTOR_WAIT_SECONDS=180
 
 # ── CORS (Thêm domain của bạn) ────────────────────────────
 CORS_ORIGINS=http://localhost,http://localhost:3000,http://localhost:3001,https://autocategory.yourdomain.com
@@ -53,26 +57,21 @@ CORS_ORIGINS=http://localhost,http://localhost:3000,http://localhost:3001,https:
 
 ## Deployment
 
-### Option 1: Deploy Script Tự Động (Khuyên Dùng)
+### Option 1: Deploy HA qua Cloudflare Tunnel (Khuyên Dùng)
 
-#### Windows:
-```powershell
-.\deploy.ps1
-```
+Chạy cùng lệnh này trên mọi máy Docker. `cf-setup` tự tìm tunnel chính xác theo
+`CF_TUNNEL_NAME`, chỉ tạo nếu chưa có; các máy sau lấy cùng token và trở thành
+replica, không xóa tunnel/máy cũ.
 
-#### Linux/Mac:
 ```bash
-chmod +x deploy.sh
-./deploy.sh
+cd autocategory
+docker compose -f docker-compose.yml -f docker-compose.cloudflare-ha.yml up -d --build --remove-orphans
 ```
 
-Script tự động:
-1. ✅ Build admin dashboard
-2. ✅ Build Docker images
-3. ✅ Start tất cả services
-4. ✅ Setup Cloudflare Tunnel
-5. ✅ Initialize database
-6. ✅ Import categories
+Mọi replica phải chạy cùng ứng dụng và phục vụ được `http://nginx:80`.
+Cloudflare Tunnel replica cung cấp HA/failover, không bảo đảm round-robin.
+`cf-publish` tự chờ connector online rồi mới tạo/cập nhật CNAME; không cần thao
+tác publish DNS thủ công và thông thường không cần cấu hình `CF_TUNNEL_ID`.
 
 ### Option 2: Deploy Thủ Công
 
@@ -86,29 +85,14 @@ cd ..
 
 #### Bước 2: Start Services
 ```bash
-# Stop containers cũ (nếu có)
-docker-compose down
-
-# Build và start services
-docker-compose up -d llama-server qdrant postgres redis
-
-# Đợi services khởi động (30s)
-sleep 30
-
-# Start API và Nginx
-docker-compose up -d api nginx
-
-# Đợi API ready (20s)
-sleep 20
+# Chỉ chạy local, không bật Cloudflare Tunnel
+docker compose up -d --build --remove-orphans
 ```
 
 #### Bước 3: Setup Cloudflare Tunnel
 ```bash
-# Run setup script (chạy 1 lần)
-docker-compose --profile setup up cf-setup
-
-# Start tunnel daemon
-docker-compose --profile tunnel up -d cloudflared
+# Bật HA overlay; setup là idempotent và chạy lại an toàn
+docker compose -f docker-compose.yml -f docker-compose.cloudflare-ha.yml up -d --build
 ```
 
 #### Bước 4: Initialize Database
@@ -243,9 +227,8 @@ docker-compose up -d --build api
 # Check tunnel logs
 docker-compose logs cloudflared
 
-# Re-setup tunnel
-docker-compose --profile setup up cf-setup --force-recreate
-docker-compose --profile tunnel restart cloudflared
+# Setup lại replica hiện tại và tự kiểm tra/publish DNS, không xóa tunnel
+docker compose -f docker-compose.yml -f docker-compose.cloudflare-ha.yml up -d --build cf-setup cloudflared cf-publish
 ```
 
 ### Admin Dashboard 404
@@ -285,7 +268,8 @@ curl http://localhost/api/admin/index-info
 git pull
 
 # Rebuild and restart
-./deploy.sh  # hoặc deploy.ps1 trên Windows
+cd autocategory
+docker compose -f docker-compose.yml -f docker-compose.cloudflare-ha.yml up -d --build --remove-orphans
 ```
 
 ### View Real-time Logs

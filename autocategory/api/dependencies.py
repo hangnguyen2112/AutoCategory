@@ -4,19 +4,48 @@ FastAPI dependencies for authentication and authorization
 from typing import Optional, Annotated
 from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from datetime import datetime
 import hashlib
+import logging
+import threading
+import time
 
-from database import get_db
+from database import SessionLocal, get_db
 from models import User, APIKey
 from auth import verify_token, Role, require_role, require_permission, Permission
+
+logger = logging.getLogger(__name__)
+_API_KEY_USAGE_FLUSH_SECONDS = 60.0
+_api_key_usage_lock = threading.Lock()
+_api_key_usage_pending: dict[int, int] = {}
+_api_key_usage_last_flush: dict[int, float] = {}
+
+
+def _take_api_key_usage_batch(api_key_id: int) -> int:
+    """Batch hot-row usage updates while keeping counters mostly current."""
+    now = time.monotonic()
+    with _api_key_usage_lock:
+        pending = _api_key_usage_pending.get(api_key_id, 0) + 1
+        last_flush = _api_key_usage_last_flush.get(api_key_id, 0.0)
+        if now - last_flush < _API_KEY_USAGE_FLUSH_SECONDS:
+            _api_key_usage_pending[api_key_id] = pending
+            return 0
+        _api_key_usage_pending[api_key_id] = 0
+        _api_key_usage_last_flush[api_key_id] = now
+        return pending
+
+
+def _restore_api_key_usage_batch(api_key_id: int, count: int) -> None:
+    with _api_key_usage_lock:
+        _api_key_usage_pending[api_key_id] = _api_key_usage_pending.get(api_key_id, 0) + count
 
 # Security scheme
 security = HTTPBearer()
 
 
-async def get_current_user(
+def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db)
 ) -> User:
@@ -65,10 +94,11 @@ async def get_current_user(
             detail="User account is inactive"
         )
     
-    # Update last login
-    user.last_login_at = datetime.utcnow()
-    db.commit()
-    
+    # last_login_at is updated by the login endpoint only. Detach the user and
+    # end this read transaction so authenticated requests do not hold a DB
+    # connection while their handlers await DeepSeek or other services.
+    db.expunge(user)
+    db.rollback()
     return user
 
 
@@ -133,16 +163,14 @@ async def get_current_developer_or_admin_user(
     return current_user
 
 
-async def verify_api_key(
+def verify_api_key(
     x_api_key: Annotated[Optional[str], Header()] = None,
-    db: Session = Depends(get_db)
 ) -> Optional[APIKey]:
     """
     Verify API key from X-API-Key header
     
     Args:
         x_api_key: API key from X-API-Key header
-        db: Database session
         
     Returns:
         API key object if valid, None if no key provided
@@ -156,35 +184,50 @@ async def verify_api_key(
     # Hash the API key for lookup
     key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
     
-    # Look up API key in database
-    api_key = db.query(APIKey).filter(APIKey.key_hash == key_hash).first()
-    
-    if api_key is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key"
-        )
-    
-    # Check if key is active
-    if not api_key.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key is inactive or revoked"
-        )
-    
-    # Check if key has expired
-    if api_key.expires_at and api_key.expires_at < datetime.utcnow():
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key has expired"
-        )
-    
-    # Update usage stats
-    api_key.total_requests += 1
-    api_key.last_used_at = datetime.utcnow()
-    db.commit()
-    
-    return api_key
+    # Authentication must finish before a StreamingResponse starts. Use a
+    # short-lived session here instead of a yield dependency whose cleanup time
+    # depends on the FastAPI version and response type.
+    with SessionLocal() as db:
+        api_key = db.query(APIKey).filter(APIKey.key_hash == key_hash).first()
+
+        if api_key is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API key"
+            )
+
+        if not api_key.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key is inactive or revoked"
+            )
+
+        if api_key.expires_at and api_key.expires_at < datetime.utcnow():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key has expired"
+            )
+
+        api_key_id = api_key.id
+        usage_batch = _take_api_key_usage_batch(api_key_id)
+        if usage_batch:
+            try:
+                db.query(APIKey).filter(APIKey.id == api_key_id).update(
+                    {
+                        APIKey.total_requests: func.coalesce(APIKey.total_requests, 0) + usage_batch,
+                        APIKey.last_used_at: datetime.utcnow(),
+                    },
+                    synchronize_session=False,
+                )
+                db.commit()
+                db.refresh(api_key)
+            except Exception:
+                db.rollback()
+                _restore_api_key_usage_batch(api_key_id, usage_batch)
+                logger.exception("Could not flush API key usage for id=%s", api_key_id)
+                db.refresh(api_key)
+        db.expunge(api_key)
+        return api_key
 
 
 async def require_api_key(

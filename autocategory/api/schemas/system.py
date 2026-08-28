@@ -6,21 +6,6 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 
 
-class ServiceStatus(BaseModel):
-    name: str
-    status: str  # running, stopped, error, unknown
-    uptime: Optional[str] = None
-    cpu_percent: Optional[float] = None
-    memory_mb: Optional[float] = None
-    error_message: Optional[str] = None
-
-
-class SystemHealthResponse(BaseModel):
-    overall_status: str  # healthy, degraded, unhealthy
-    services: list[ServiceStatus]
-    timestamp: datetime
-    
-    
 class ServiceControlRequest(BaseModel):
     action: str  # start, stop, restart
     force: bool = False

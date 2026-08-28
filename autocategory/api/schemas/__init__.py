@@ -44,8 +44,6 @@ from .category_sync import (
     CategoryRebuildIndexResponse,
 )
 from .system import (
-    ServiceStatus,
-    SystemHealthResponse,
     ServiceControlRequest,
     ServiceControlResponse,
     CacheClearRequest,
@@ -98,8 +96,6 @@ __all__ = [
     "CategoryRebuildIndexRequest",
     "CategoryRebuildIndexResponse",
     # System
-    "ServiceStatus",
-    "SystemHealthResponse",
     "ServiceControlRequest",
     "ServiceControlResponse",
     "CacheClearRequest",

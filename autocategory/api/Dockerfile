@@ -19,7 +19,6 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 COPY . .
 
-# Ollama model pull script chạy khi container start
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

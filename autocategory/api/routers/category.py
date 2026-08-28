@@ -98,6 +98,8 @@ async def suggest_fields(
     attrs = get_attributes_for_category(category_id, db)
     if not attrs:
         return {"category_id": category_id, "suggestions": {}}
+    # The LLM call can be slow; release the read transaction before awaiting it.
+    db.rollback()
     suggestions = await suggest_field_values(
         title=body.title,
         description=body.description or "",

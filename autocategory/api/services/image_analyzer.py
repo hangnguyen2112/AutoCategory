@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 
 from config import settings
-from services.llm_service import get_llm_client, is_lm_studio, _extract_json, post_completions_with_retry
+from services.llm_service import get_llm_client, _extract_json, post_completions_with_retry
 
 logger = logging.getLogger(__name__)
 

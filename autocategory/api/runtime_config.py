@@ -22,14 +22,7 @@ logger = logging.getLogger(__name__)
 
 # ── Default values (dùng khi DB chưa có row) ──────────────────────────────────
 _DEFAULTS: dict[str, Any] = {
-    "llm.provider":                    "lm_studio",
-    "llm.lm_studio_base_url":          "http://host.docker.internal:11434",
-    "llm.lm_studio_model":             "google/gemma-4-e4b",
-    "llm.llama_base_url":              "http://llama-server:8080",
-    "llm.llama_model":                 "gemma4-e4b",
-    "llm.gemini_web_secure_1psid":     "",
-    "llm.gemini_web_secure_1psidts":   "",
-    "llm.gemini_web_model":            "unspecified",
+    "llm.provider":                    "deepseek",
     "llm.deepseek_api_key":            "",
     "llm.deepseek_model":              "deepseek-chat",
 }
@@ -49,11 +42,15 @@ class RuntimeConfig:
         try:
             rows = db.execute(
                 __import__("sqlalchemy").text(
-                    "SELECT key, value FROM system_config WHERE key LIKE 'llm.%' AND is_active = true"
+                    """SELECT key, value FROM system_config
+                       WHERE key IN ('llm.provider', 'llm.deepseek_api_key', 'llm.deepseek_model')
+                         AND is_active = true"""
                 )
             ).fetchall()
             for key, value in rows:
                 self._data[key] = value
+            # Ignore a legacy provider value left in an existing database.
+            self._data["llm.provider"] = "deepseek"
             self._loaded = True
             logger.info("RuntimeConfig loaded %d LLM keys from DB", len(rows))
         except Exception as e:
@@ -62,60 +59,39 @@ class RuntimeConfig:
 
     def _save_to_db(self, db: Session, key: str, value: str, user_id: int | None = None) -> None:
         """Upsert một key vào system_config."""
+        self._save_many_to_db(db, {key: value}, user_id)
+
+    def _save_many_to_db(
+        self,
+        db: Session,
+        values: dict[str, str],
+        user_id: int | None = None,
+    ) -> None:
+        """Atomically upsert multiple runtime settings."""
         try:
-            db.execute(
-                __import__("sqlalchemy").text("""
-                    INSERT INTO system_config (key, value, value_type, category, is_active, updated_by)
-                    VALUES (:key, :value, 'string', 'llm', true, :uid)
-                    ON CONFLICT (key) DO UPDATE
-                      SET value = EXCLUDED.value,
-                          updated_by = EXCLUDED.updated_by,
-                          updated_at = CURRENT_TIMESTAMP
-                """),
-                {"key": key, "value": value, "uid": user_id},
-            )
+            for key, value in values.items():
+                db.execute(
+                    __import__("sqlalchemy").text("""
+                        INSERT INTO system_config (key, value, value_type, category, is_active, updated_by)
+                        VALUES (:key, :value, 'string', 'llm', true, :uid)
+                        ON CONFLICT (key) DO UPDATE
+                          SET value = EXCLUDED.value,
+                              updated_by = EXCLUDED.updated_by,
+                              updated_at = CURRENT_TIMESTAMP
+                    """),
+                    {"key": key, "value": value, "uid": user_id},
+                )
             db.commit()
         except Exception as e:
-            logger.error("RuntimeConfig: failed to save key=%s: %s", key, e)
+            logger.error("RuntimeConfig: failed to save keys=%s: %s", list(values), e)
             db.rollback()
+            raise
 
     # ── Getters ────────────────────────────────────────────────────────────────
 
     @property
     def llm_provider(self) -> str:
-        return self._data.get("llm.provider", "lm_studio")
-
-    @property
-    def lm_studio_base_url(self) -> str:
-        return self._data.get("llm.lm_studio_base_url", "http://host.docker.internal:11434")
-
-    @property
-    def lm_studio_model(self) -> str:
-        return self._data.get("llm.lm_studio_model", "google/gemma-4-e4b")
-
-    @property
-    def llama_base_url(self) -> str:
-        return self._data.get("llm.llama_base_url", "http://llama-server:8080")
-
-    @property
-    def llama_model(self) -> str:
-        return self._data.get("llm.llama_model", "gemma4-e4b")
-
-    @property
-    def gemini_web_secure_1psid(self) -> str:
-        return self._data.get("llm.gemini_web_secure_1psid", "")
-
-    @property
-    def gemini_web_secure_1psidts(self) -> str:
-        return self._data.get("llm.gemini_web_secure_1psidts", "")
-
-    @property
-    def gemini_web_model(self) -> str:
-        val = self._data.get("llm.gemini_web_model", "unspecified")
-        # Migrate old gemini-1.x / gemini-2.x names → unspecified (không còn hợp lệ)
-        if val and (val.startswith("gemini-1.") or val.startswith("gemini-2.")):
-            val = "unspecified"
-        return val
+        return "deepseek"
 
     @property
     def deepseek_api_key(self) -> str:
@@ -128,32 +104,10 @@ class RuntimeConfig:
     # ── Setters (cập nhật memory + DB) ────────────────────────────────────────
 
     def set_provider(self, value: str, db: Session, user_id: int | None = None) -> None:
-        self._data["llm.provider"] = value
+        if value != "deepseek":
+            raise ValueError("This deployment supports DeepSeek only")
         self._save_to_db(db, "llm.provider", value, user_id)
-
-    def set_lm_studio_base_url(self, value: str, db: Session, user_id: int | None = None) -> None:
-        self._data["llm.lm_studio_base_url"] = value
-        self._save_to_db(db, "llm.lm_studio_base_url", value, user_id)
-
-    def set_lm_studio_model(self, value: str, db: Session, user_id: int | None = None) -> None:
-        self._data["llm.lm_studio_model"] = value
-        self._save_to_db(db, "llm.lm_studio_model", value, user_id)
-
-    def set_gemini_web_cookies(
-        self,
-        secure_1psid: str,
-        secure_1psidts: str,
-        db: Session,
-        user_id: int | None = None,
-    ) -> None:
-        self._data["llm.gemini_web_secure_1psid"] = secure_1psid
-        self._data["llm.gemini_web_secure_1psidts"] = secure_1psidts
-        self._save_to_db(db, "llm.gemini_web_secure_1psid", secure_1psid, user_id)
-        self._save_to_db(db, "llm.gemini_web_secure_1psidts", secure_1psidts, user_id)
-
-    def set_gemini_web_model(self, model: str, db: Session, user_id: int | None = None) -> None:
-        self._data["llm.gemini_web_model"] = model
-        self._save_to_db(db, "llm.gemini_web_model", model, user_id)
+        self._data["llm.provider"] = value
 
     def set_deepseek_config(
         self,
@@ -162,10 +116,12 @@ class RuntimeConfig:
         db: Session,
         user_id: int | None = None,
     ) -> None:
+        self._save_many_to_db(db, {
+            "llm.deepseek_api_key": api_key,
+            "llm.deepseek_model": model,
+        }, user_id)
         self._data["llm.deepseek_api_key"] = api_key
         self._data["llm.deepseek_model"] = model
-        self._save_to_db(db, "llm.deepseek_api_key", api_key, user_id)
-        self._save_to_db(db, "llm.deepseek_model", model, user_id)
 
 
 # ── Singleton ──────────────────────────────────────────────────────────────────

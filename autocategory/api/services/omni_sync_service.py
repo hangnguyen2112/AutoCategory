@@ -3,6 +3,7 @@ Omni Sync Service – đồng bộ danh mục & fields từ API omni → Postgre
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any
@@ -161,42 +162,55 @@ async def sync_attributes_from_omni(
     """
     if not category_ids:
         category_ids = [row.id for row in db.query(Category.id).filter(Category.is_active == 1).all()]
+    # End the read transaction before waiting on the remote API. The fetched
+    # IDs are plain integers and no longer need an active SQLAlchemy session.
+    db.rollback()
 
     base = base_url.rstrip("/")
-    success_count = 0
+    semaphore = asyncio.Semaphore(8)
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for cat_id in category_ids:
+    async with httpx.AsyncClient(
+        timeout=30.0,
+        limits=httpx.Limits(max_connections=8, max_keepalive_connections=8),
+    ) as client:
+        async def fetch_fields(cat_id: int) -> tuple[int, list[dict]] | None:
             try:
-                resp = await client.get(f"{base}/api/v1/app/categories/{cat_id}/fields")
+                async with semaphore:
+                    resp = await client.get(f"{base}/api/v1/app/categories/{cat_id}/fields")
                 if resp.status_code != 200:
-                    continue
+                    return None
                 d = resp.json()
                 fields: list[dict] = d.get("data", {}).get("fields", [])
                 if not fields:
-                    continue
-
-                # Xóa fields cũ của category này rồi insert lại
-                db.query(CategoryField).filter(CategoryField.category_id == cat_id).delete()
-                for idx, f in enumerate(fields):
-                    db.add(CategoryField(
-                        category_id=cat_id,
-                        omni_field_id=f.get("id"),
-                        field_key=f.get("field_key", ""),
-                        field_label=f.get("field_label", ""),
-                        field_type=f.get("field_type", "text"),
-                        field_options=f.get("field_options") or [],
-                        is_required=bool(f.get("is_required", False)),
-                        is_featured=bool(f.get("is_featured", False)),
-                        parent_field_id=f.get("parent_field_id"),
-                        parent_field_value=f.get("parent_field_value"),
-                        sort_order=f.get("sort_order", idx),
-                    ))
-                success_count += 1
+                    return None
+                return cat_id, fields
             except Exception as e:
                 logger.debug(f"No fields for category {cat_id}: {e}")
+                return None
+
+        fetched = await asyncio.gather(*(fetch_fields(cat_id) for cat_id in category_ids))
+
+    # Only check out a database connection after all network I/O has finished.
+    successful = [item for item in fetched if item is not None]
+    for cat_id, fields in successful:
+        db.query(CategoryField).filter(CategoryField.category_id == cat_id).delete()
+        for idx, f in enumerate(fields):
+            db.add(CategoryField(
+                category_id=cat_id,
+                omni_field_id=f.get("id"),
+                field_key=f.get("field_key", ""),
+                field_label=f.get("field_label", ""),
+                field_type=f.get("field_type", "text"),
+                field_options=f.get("field_options") or [],
+                is_required=bool(f.get("is_required", False)),
+                is_featured=bool(f.get("is_featured", False)),
+                parent_field_id=f.get("parent_field_id"),
+                parent_field_value=f.get("parent_field_value"),
+                sort_order=f.get("sort_order", idx),
+            ))
 
     db.commit()
+    success_count = len(successful)
     logger.info(f"Synced fields for {success_count}/{len(category_ids)} categories")
     return {
         "categories_checked": len(category_ids),

@@ -11,8 +11,6 @@ import redis as redis_lib
 from database import get_db
 from models import User, APIKey, RequestLog, TrainingData
 from schemas.system import (
-    SystemHealthResponse,
-    ServiceStatus,
     ServiceControlRequest,
     ServiceControlResponse,
     CacheClearRequest,
@@ -29,128 +27,8 @@ from config import settings
 router = APIRouter(prefix="/api/admin/system", tags=["Admin - System"])
 
 
-@router.get("/health", response_model=SystemHealthResponse)
-async def get_system_health(
-    current_admin: CurrentAdminUser,
-    db: Session = Depends(get_db)
-):
-    """
-    Get overall system health status
-    """
-    services = []
-    
-    # Check API (always running if we're here)
-    services.append(ServiceStatus(
-        name="api",
-        status="healthy",
-        cpu_percent=psutil.cpu_percent(interval=0.1),
-        memory_mb=psutil.Process().memory_info().rss / 1024 / 1024
-    ))
-    
-    # Check PostgreSQL
-    try:
-        from sqlalchemy import text
-        db.execute(text("SELECT 1"))
-        services.append(ServiceStatus(
-            name="postgres",
-            status="healthy",
-            cpu_percent=0.0,
-            memory_mb=0.0
-        ))
-    except Exception as e:
-        services.append(ServiceStatus(
-            name="postgres",
-            status="unhealthy",
-            cpu_percent=0.0,
-            memory_mb=0.0,
-            error_message=str(e)
-        ))
-    
-    # Check Redis
-    try:
-        redis_client = redis_lib.from_url(settings.redis_url, decode_responses=True)
-        redis_client.ping()
-        services.append(ServiceStatus(
-            name="redis",
-            status="healthy",
-            cpu_percent=0.0,
-            memory_mb=0.0
-        ))
-    except Exception as e:
-        services.append(ServiceStatus(
-            name="redis",
-            status="unhealthy",
-            cpu_percent=0.0,
-            memory_mb=0.0,
-            error_message=str(e)
-        ))
-    
-    # Check Qdrant
-    try:
-        from services.qdrant_service import QdrantService
-        qdrant = QdrantService()
-        collections = await qdrant.client.get_collections()
-        services.append(ServiceStatus(
-            name="qdrant",
-            status="healthy",
-            cpu_percent=0.0,
-            memory_mb=0.0
-        ))
-    except Exception as e:
-        services.append(ServiceStatus(
-            name="qdrant",
-            status="unhealthy",
-            cpu_percent=0.0,
-            memory_mb=0.0,
-            error_message=str(e)
-        ))
-    
-    # Check LLM Server
-    try:
-        import httpx
-        response = httpx.get(f"{settings.llama_base_url}/health", timeout=5)
-        if response.status_code == 200:
-            services.append(ServiceStatus(
-                name="llm",
-                status="healthy",
-                cpu_percent=0.0,
-                memory_mb=0.0
-            ))
-        else:
-            services.append(ServiceStatus(
-                name="llm",
-                status="unhealthy",
-                cpu_percent=0.0,
-                memory_mb=0.0,
-                error_message=f"HTTP {response.status_code}"
-            ))
-    except Exception as e:
-        services.append(ServiceStatus(
-            name="llm",
-            status="unhealthy",
-            cpu_percent=0.0,
-            memory_mb=0.0,
-            error_message=str(e)
-        ))
-    
-    # Determine overall status
-    error_count = sum(1 for s in services if s.status != "healthy")
-    if error_count == 0:
-        overall_status = "healthy"
-    elif error_count <= 2:
-        overall_status = "degraded"
-    else:
-        overall_status = "unhealthy"
-    
-    return SystemHealthResponse(
-        overall_status=overall_status,
-        services=services,
-        timestamp=datetime.utcnow()
-    )
-
-
 @router.post("/services/{service_name}/control", response_model=ServiceControlResponse)
-async def control_service(
+def control_service(
     service_name: str,
     request: ServiceControlRequest,
     current_admin: CurrentAdminUser
@@ -195,7 +73,7 @@ async def control_service(
 
 
 @router.post("/cache/clear", response_model=CacheClearResponse)
-async def clear_cache(
+def clear_cache(
     request: CacheClearRequest,
     current_admin: CurrentAdminUser
 ):
@@ -233,7 +111,7 @@ async def clear_cache(
 
 
 @router.get("/logs", response_model=SystemLogsResponse)
-async def get_system_logs(
+def get_system_logs(
     current_admin: CurrentAdminUser,
     service: Optional[str] = None,
     level: Optional[str] = None,
@@ -300,7 +178,7 @@ async def get_system_logs(
 
 
 @router.get("/metrics", response_model=SystemMetricsResponse)
-async def get_system_metrics(
+def get_system_metrics(
     current_admin: CurrentAdminUser
 ):
     """
@@ -320,14 +198,14 @@ async def get_system_metrics(
 
 
 @router.get("/database/stats", response_model=DatabaseStatsResponse)
-async def get_database_stats(
+def get_database_stats(
     current_admin: CurrentAdminUser,
     db: Session = Depends(get_db)
 ):
     """
     Get database statistics
     """
-    from sqlalchemy import func
+    from sqlalchemy import func, text
     
     # Count records
     total_users = db.query(User).count()
@@ -343,9 +221,7 @@ async def get_database_stats(
     
     # Get database size (PostgreSQL specific)
     try:
-        size_query = db.execute(
-            "SELECT pg_database_size(current_database())"
-        )
+        size_query = db.execute(text("SELECT pg_database_size(current_database())"))
         db_size_bytes = size_query.scalar()
         db_size_mb = db_size_bytes / 1024 / 1024 if db_size_bytes else 0
     except Exception:
@@ -363,7 +239,7 @@ async def get_database_stats(
 
 
 @router.get("/info")
-async def get_system_info(
+def get_system_info(
     current_admin: CurrentAdminUser
 ):
     """

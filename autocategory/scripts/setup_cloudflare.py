@@ -142,10 +142,12 @@ def get_or_create_tunnel(account_id: str, name: str) -> tuple[str, str]:
             print(f"   Reuse tunnel: {name} ({tunnel_id})")
             return tunnel_id, creds["TunnelSecret"]
 
-    # Xoá tunnel cũ cùng tên nếu không còn credentials (tránh conflict)
-    for t in tunnels:
-        client.delete(f"/accounts/{account_id}/cfd_tunnel/{t['id']}")
-        print(f"   Removed stale tunnel: {t['id']}")
+    if tunnels:
+        tunnel_id = tunnels[0]["id"]
+        print(f"\nERROR: Tunnel '{name}' already exists ({tunnel_id}) but local credentials are missing.")
+        print("Refusing to delete it because other Docker hosts may still be using it.")
+        print("Use the remotely-managed HA setup in cloudflare/setup-ha.sh instead.\n")
+        sys.exit(1)
 
     # Tạo mới
     secret = base64.b64encode(secrets.token_bytes(32)).decode()

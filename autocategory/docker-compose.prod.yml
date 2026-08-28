@@ -1,7 +1,6 @@
-version: "3.9"
-
-# Production compose – Cloudflare tunnel tự động hoàn toàn từ .env
-# Chỉ cần: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Legacy local-credentials overlay. Kept only for rollback compatibility.
+# New deployments must use docker-compose.cloudflare-ha.yml instead.
+# This file intentionally preserves the old local-credentials workflow.
 
 services:
 

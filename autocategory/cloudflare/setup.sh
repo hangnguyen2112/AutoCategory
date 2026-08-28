@@ -22,8 +22,6 @@ AUTH="Authorization: Bearer $CF_API_TOKEN"
 
 cf_get() { curl -sf -H "$AUTH" "$CF_API/$1"; }
 cf_put() { curl -sf -X PUT  -H "$AUTH" -H "Content-Type: application/json" "$CF_API/$1" -d "$2"; }
-cf_del() { curl -sf -X DELETE -H "$AUTH" "$CF_API/$1" > /dev/null 2>&1 || true; }
-
 cf_post_verbose() {
   # Returns full response + HTTP code on separate line (no -f so body is shown on 4xx/5xx)
   curl -s -w "\nHTTP_CODE:%{http_code}" \
@@ -68,15 +66,18 @@ if [ -n "$tunnel_id" ] && [ -f "$CREDS" ]; then
   fi
 fi
 
-# Tao moi neu chua co hoac khong khop
+# Never replace a live tunnel just because this Docker host does not have its
+# local credentials volume. Replacing it would disconnect every old replica.
+if [ -n "$tunnel_id" ] && [ -z "$secret" ]; then
+  echo "ERROR: Existing locally-managed tunnel found but this host has no matching credentials."
+  echo "Refusing to delete tunnel $tunnel_id. Use setup-ha.sh with a remotely-managed tunnel"
+  echo "to add this host as a replica, or restore the original credentials volume."
+  exit 1
+fi
+
+# Create only when no tunnel with this name exists.
 if [ -z "$secret" ]; then
   echo "     Creating new tunnel..."
-  # Xoa tunnel cu cung ten neu co
-  for tid in $(echo "$list_json" | jq -r '.result[].id // empty'); do
-    cf_del "accounts/$CF_ACCOUNT_ID/cfd_tunnel/$tid"
-    echo "     Removed stale tunnel: $tid"
-  done
-
   secret=$(dd if=/dev/urandom bs=32 count=1 2>/dev/null | base64 | tr -d '\n')
   echo "     secret len=${#secret}"
 

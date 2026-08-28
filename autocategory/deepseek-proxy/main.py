@@ -22,6 +22,14 @@ from pydantic import BaseModel
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+
+class _HealthAccessFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return " /health " not in record.getMessage()
+
+
+logging.getLogger("uvicorn.access").addFilter(_HealthAccessFilter())
+
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-chat"
 
@@ -37,7 +45,15 @@ async def lifespan(app: FastAPI):
         logger.info("DeepSeek API key loaded from env (len=%d)", len(_config["api_key"]))
     else:
         logger.warning("No DEEPSEEK_API_KEY — set via POST /configure or env var")
-    yield
+    app.state.http_client = httpx.AsyncClient(
+        base_url=DEEPSEEK_BASE_URL,
+        timeout=httpx.Timeout(120.0, connect=10.0),
+        limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+    )
+    try:
+        yield
+    finally:
+        await app.state.http_client.aclose()
 
 
 app = FastAPI(title="DeepSeek Proxy", version="1.0.0", lifespan=lifespan)
@@ -81,18 +97,18 @@ async def proxy(path: str, request: Request):
         "Content-Type": "application/json",
     }
 
-    async with httpx.AsyncClient(base_url=DEEPSEEK_BASE_URL, timeout=120.0) as client:
-        try:
-            resp = await client.request(
-                method=request.method,
-                url=f"/v1/{path}",
-                content=body,
-                headers=headers,
-            )
-        except httpx.TimeoutException:
-            raise HTTPException(status_code=504, detail="DeepSeek API timeout")
-        except httpx.ConnectError as exc:
-            raise HTTPException(status_code=502, detail=f"Không kết nối được DeepSeek: {exc}")
+    client: httpx.AsyncClient = request.app.state.http_client
+    try:
+        resp = await client.request(
+            method=request.method,
+            url=f"/v1/{path}",
+            content=body,
+            headers=headers,
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="DeepSeek API timeout")
+    except httpx.ConnectError as exc:
+        raise HTTPException(status_code=502, detail=f"Không kết nối được DeepSeek: {exc}")
 
     return Response(
         content=resp.content,

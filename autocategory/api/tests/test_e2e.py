@@ -304,11 +304,12 @@ class TestSystemOperations:
     
     async def test_health_check(self, client):
         """Test health endpoint"""
-        response = await client.get("/health")
+        response = await client.get("/api/health")
         
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] in ["healthy", "degraded", "unhealthy"]
+        assert data["status"] in ["ok", "degraded"]
+        assert "database_pool" in data
     
     async def test_system_metrics(self, client, admin_token):
         """Test metrics endpoint"""

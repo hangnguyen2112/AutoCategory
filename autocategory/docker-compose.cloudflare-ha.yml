@@ -1,0 +1,50 @@
+# Opt-in Cloudflare Tunnel HA overlay.
+# Each Docker host runs the same remotely-managed tunnel as a replica.
+services:
+  cf-setup:
+    build:
+      context: ./cloudflare
+      dockerfile: Dockerfile.ha
+    container_name: autocategory_cf_setup
+    env_file: .env
+    environment:
+      CF_TUNNEL_ID: ${CF_TUNNEL_ID:-}
+      CF_TUNNEL_NAME: ${CF_TUNNEL_NAME:-autocategory-ha}
+      CF_ORIGIN_SERVICE: ${CF_ORIGIN_SERVICE:-http://nginx:80}
+    volumes:
+      - cf_runtime:/cf-runtime
+    restart: "no"
+    profiles: !reset []
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: autocategory_tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token-file /cf-runtime/tunnel-token
+    volumes:
+      - cf_runtime:/cf-runtime:ro
+    depends_on:
+      cf-setup:
+        condition: service_completed_successfully
+      nginx:
+        condition: service_started
+    profiles: !reset []
+
+  cf-publish:
+    build:
+      context: ./cloudflare
+      dockerfile: Dockerfile.ha
+    container_name: autocategory_cf_publish
+    command: /publish-dns.sh
+    env_file: .env
+    environment:
+      CF_CONNECTOR_WAIT_SECONDS: ${CF_CONNECTOR_WAIT_SECONDS:-180}
+    volumes:
+      - cf_runtime:/cf-runtime:ro
+    depends_on:
+      cf-setup:
+        condition: service_completed_successfully
+      cloudflared:
+        condition: service_started
+    restart: "no"
+    profiles: !reset []

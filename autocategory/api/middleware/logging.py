@@ -124,23 +124,22 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             
             # Log to database asynchronously
             try:
-                db = SessionLocal()
-                log_entry = RequestLog(
-                    api_key_id=api_key_id,
-                    user_id=user_id,
-                    endpoint=endpoint,
-                    method=method,
-                    request_body=_sanitize_request_body(request_body),  # Strip large fields, keep valid JSON
-                    response_status=status_code,
-                    response_time_ms=response_time_ms,
-                    error_message=error_message,
-                    ip_address=ip_address,
-                    user_agent=user_agent[:500] if user_agent else None,  # Limit size
-                    **classification_data
-                )
-                db.add(log_entry)
-                db.commit()
-                db.close()
+                with SessionLocal() as db:
+                    log_entry = RequestLog(
+                        api_key_id=api_key_id,
+                        user_id=user_id,
+                        endpoint=endpoint,
+                        method=method,
+                        request_body=_sanitize_request_body(request_body),  # Strip large fields, keep valid JSON
+                        response_status=status_code,
+                        response_time_ms=response_time_ms,
+                        error_message=error_message,
+                        ip_address=ip_address,
+                        user_agent=user_agent[:500] if user_agent else None,  # Limit size
+                        **classification_data
+                    )
+                    db.add(log_entry)
+                    db.commit()
             except Exception as e:
                 logger.error(f"Failed to log request to database: {e}")
         

@@ -134,7 +134,6 @@ export const llmAPI = {
 
 // System Control API
 export const systemAPI = {
-  health: () => api.get('/admin/system/health'),
   serviceControl: (service, action) =>
     api.post(`/admin/system/services/${service}/control`, { action }),
   clearCache: (data) => api.post('/admin/system/cache/clear', data),

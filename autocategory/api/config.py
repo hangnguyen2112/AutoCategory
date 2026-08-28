@@ -4,17 +4,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # LLM Configuration
-    llama_base_url: str = "http://llama-server:8080"
-    llama_model: str = "gemma4-e4b"  # model name dùng trong API call
+    # LLM Configuration (DeepSeek-only deployment)
     protonx_api_key: str = ""
-
-    # LLM Provider: "llama" (llama.cpp server) hoặc "lm_studio" (LM Studio)
-    llm_provider: str = "llama"
-
-    # LM Studio (chạy trên host machine, port mặc định 11434)
-    lm_studio_base_url: str = "http://host.docker.internal:11434"
-    lm_studio_model: str = "google/gemma-4-e4b"
+    deepseek_proxy_url: str = "http://deepseek-proxy:8002"
 
     # Vector DB
     qdrant_host: str = "qdrant"
@@ -23,6 +15,11 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "postgresql://autocategory:change_me@localhost:5432/autocategory"
+    db_pool_size: int = 10
+    db_max_overflow: int = 5
+    db_pool_timeout: int = 10
+    db_pool_recycle: int = 1800
+    db_pool_warn_seconds: int = 30
     
     # Redis
     redis_url: str = "redis://redis:6379/0"

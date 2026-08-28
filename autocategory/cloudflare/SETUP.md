@@ -5,11 +5,19 @@
 - Tài khoản Cloudflare (free tier đủ dùng)
 - Domain đã thêm vào Cloudflare
 - Docker + Docker Compose đã cài
-- Python 3.8+ + `pip install httpx`
 
 ---
 
-## Cách nhanh nhất (script tự động)
+## Mô hình HA an toàn
+
+Mỗi máy chạy một `cloudflared` replica của **cùng một remotely-managed tunnel**.
+Cloudflare tự chuyển request sang replica còn hoạt động nếu một máy mất kết nối.
+Mọi replica phải chạy cùng ứng dụng và phục vụ được cùng hostname/origin.
+
+Script HA không bao giờ xóa tunnel hoặc DNS record. Nếu phát hiện tunnel local cũ,
+script dừng lại trước khi thay đổi Cloudflare.
+
+## Cách triển khai
 
 ### Bước 1: Tạo Cloudflare API Token
 
@@ -31,29 +39,44 @@ CF_API_TOKEN=your_api_token_here
 CF_ACCOUNT_ID=your_account_id_here
 CF_SUBDOMAIN=autocategory       # subdomain muốn dùng
 CF_DOMAIN=yourdomain.com        # domain đã có trong Cloudflare
+CF_TUNNEL_NAME=autocategory-ha  # giống nhau trên mọi máy
+# Tùy chọn; để trống sẽ tự tìm chính xác theo tên:
+CF_TUNNEL_ID=
 ```
 
 > **Không cần** vào Cloudflare dashboard để tạo tunnel hay DNS thủ công.
 
-### Bước 4: Deploy (không cần thêm bước nào)
+### Bước 4: Deploy replica
 
 ```bash
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.cloudflare-ha.yml up -d --build --remove-orphans
 ```
 
 Docker tự động:
-- ✅ Service `cf-setup` gọi Cloudflare API, lấy Zone ID, tạo tunnel
-- ✅ Ghi credentials + config vào Docker volume `cf_runtime`
-- ✅ Tạo DNS CNAME record có Cloudflare proxy
-- ✅ Service `cloudflared` khởi động sau khi setup xong
+- Tìm chính xác `CF_TUNNEL_NAME` và dùng lại remotely-managed tunnel nếu có.
+- Chỉ tạo tunnel khi chưa có; không bao giờ xóa tunnel cũ.
+- Merge hostname vào remote ingress mà không xóa các hostname khác.
+- Lấy cùng tunnel token vào volume cục bộ của từng máy.
+- Chạy `cloudflared` như một replica mới.
+- `cf-publish` chờ tunnel có connector rồi tự tạo/cập nhật CNAME.
 
-### Bước 6: Build index (lần đầu)
+Xem tunnel đã chọn và kết quả publish DNS:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.cloudflare-ha.yml logs cf-setup cf-publish
+```
+
+Thông thường không cần cấu hình `CF_TUNNEL_ID`. Chỉ điền UUID nếu tài khoản có
+nhiều remotely-managed tunnel trùng chính xác một tên; trong trường hợp đó script
+sẽ dừng an toàn thay vì tự chọn nhầm.
+
+### Bước 5: Build index (lần đầu)
 
 ```bash
 curl -X POST https://autocategory.yourdomain.com/api/admin/build-index
 ```
 
-### Bước 7: Truy cập
+### Bước 6: Truy cập
 
 ```
 https://autocategory.yourdomain.com          → Test page
@@ -62,19 +85,27 @@ https://autocategory.yourdomain.com/api/docs → Swagger UI
 
 ---
 
-## Chạy lại setup (đổi subdomain / domain)
+## Thêm máy mới
 
-Chỉ cần sửa `.env` rồi restart – `cf-setup` tự xóa tunnel cũ và tạo mới:
+Copy cùng `.env` (đặc biệt `CF_ACCOUNT_ID`, `CF_DOMAIN`, `CF_TUNNEL_NAME`) sang
+máy mới rồi chạy đúng lệnh deploy ở trên. Script tự nhận diện tunnel theo tên và
+lấy token dùng chung. Không xóa tunnel, DNS hoặc volume trên máy cũ; máy cũ tiếp
+tục là một replica đang hoạt động.
 
-```bash
-# Xóa volume cũ để force setup lại
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml \
-  rm -sf cf-setup cloudflared
-docker volume rm autocategory_cf_runtime
+> Replica cùng tunnel là HA/failover, không bảo đảm round-robin. Nếu các máy chạy
+> ứng dụng khác nhau hoặc cần điều phối tải theo health/địa lý, dùng tunnel riêng
+> cho từng origin kết hợp Cloudflare Load Balancer.
 
-# Deploy lại
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-```
+## Chuyển từ tunnel local cũ mà không gián đoạn máy cũ
+
+1. Nếu tunnel cũ là local và trùng tên, chọn một tên remote mới, ví dụ
+   `CF_TUNNEL_NAME=autocategory-ha`. Script không tự chuyển đổi hay xóa tunnel local.
+2. Deploy bằng HA overlay. `cf-setup` tạo/reuse tunnel remote, `cloudflared` kết
+   nối, sau đó `cf-publish` mới tự chuyển CNAME production sang tunnel đã online.
+3. Chạy cùng cấu hình `CF_TUNNEL_NAME` trên máy mới. Máy mới tự nhận tunnel và
+   trở thành replica thứ hai; không có tài nguyên nào của máy cũ bị xóa.
+4. Chỉ sau khi các replica mới hoạt động mới cân nhắc xóa tunnel local cũ bằng
+   tay trên Cloudflare. Script của dự án không thực hiện bước xóa này.
 
 ---
 
@@ -83,36 +114,6 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```bash
 # Health check
 curl https://autocategory.yourdomain.com/api/health
-
-# Test classify
-curl -X POST https://autocategory.yourdomain.com/api/classify \
-  -H "Content-Type: application/json" \
-  -d '{"title":"Pass ip13 prm 256g fullbox","description":"pin 88, còn bh","price":12500000}'
-```
-
----
-
-## Bảo mật admin endpoint
-
-Thêm vào `nginx/nginx.conf` để chỉ cho IP nội bộ gọi `/api/admin/`:
-
-```nginx
-location /api/admin/ {
-    allow 127.0.0.1;
-    deny all;
-    proxy_pass http://api_backend;
-    proxy_set_header Host $host;
-}
-```
-
-## Kiểm tra nhanh sau deploy
-
-```bash
-# Health check
-curl https://autocategory.yourdomain.com/api/health
-
-# Index categories
-curl -X POST https://autocategory.yourdomain.com/api/admin/build-index
 
 # Test classify
 curl -X POST https://autocategory.yourdomain.com/api/classify \
@@ -124,16 +125,6 @@ curl -X POST https://autocategory.yourdomain.com/api/classify \
 
 ## Bảo mật cho production
 
-Nếu API cần giới hạn truy cập, thêm vào nginx.conf:
-
-```nginx
-# Restrict /api/admin/* chỉ cho IP nội bộ
-location /api/admin/ {
-    allow 127.0.0.1;
-    allow 10.0.0.0/8;
-    deny all;
-    proxy_pass http://api_backend;
-}
-```
-
-Hoặc dùng Cloudflare Access (Zero Trust) để protect toàn bộ app.
+Các cổng PostgreSQL, Redis và Qdrant chỉ bind vào `127.0.0.1` của Docker host;
+Nginx không public Qdrant dashboard. Với dashboard/API admin, nên dùng Cloudflare
+Access (Zero Trust) nếu cần thêm một lớp xác thực ở edge.

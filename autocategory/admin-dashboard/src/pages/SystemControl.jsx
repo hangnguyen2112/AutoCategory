@@ -1,12 +1,8 @@
 import { useEffect, useState } from 'react'
 import { systemAPI, llmAPI } from '../services/api'
 import {
-  Server,
   Activity,
   RefreshCw,
-  Play,
-  Square,
-  RotateCw,
   Database,
   HardDrive,
   Trash2,
@@ -18,96 +14,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
-function ServiceCard({ name, status, onControl }) {
-  const isRunning = status?.status === 'running' || status?.status === 'healthy'
-  const isError = status?.status === 'error' || status?.status === 'unhealthy'
-  
-  return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <Server className="h-5 w-5 text-gray-600 dark:text-gray-400" />
-          <h3 className="font-semibold text-gray-900 dark:text-white">{name}</h3>
-        </div>
-        <span
-          className={`badge ${
-            isRunning ? 'badge-success' : 
-            isError ? 'badge-danger' : 
-            'badge-secondary'
-          }`}
-        >
-          {isRunning ? 'Running' : 
-           isError ? 'Error' : 
-           'Stopped'}
-        </span>
-      </div>
-
-      {status && (
-        <div className="space-y-2 mb-4 text-sm">
-          {status.cpu_percent !== undefined && (
-            <div className="flex justify-between">
-              <span className="text-gray-600 dark:text-gray-400">CPU:</span>
-              <span className="font-medium text-gray-900 dark:text-white">
-                {status.cpu_percent?.toFixed(1)}%
-              </span>
-            </div>
-          )}
-          {status.memory_mb !== undefined && (
-            <div className="flex justify-between">
-              <span className="text-gray-600 dark:text-gray-400">Memory:</span>
-              <span className="font-medium text-gray-900 dark:text-white">
-                {status.memory_mb?.toFixed(0)} MB
-              </span>
-            </div>
-          )}
-          {status.uptime && (
-            <div className="flex justify-between">
-              <span className="text-gray-600 dark:text-gray-400">Uptime:</span>
-              <span className="font-medium text-gray-900 dark:text-white">{status.uptime}</span>
-            </div>
-          )}
-          {status.error_message && (
-            <div className="text-red-600 dark:text-red-400 text-xs mt-2">
-              {status.error_message}
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="flex gap-2">
-        <button
-          onClick={() => onControl(name.toLowerCase(), 'start')}
-          disabled={isRunning}
-          className="btn btn-primary btn-sm flex items-center gap-1 flex-1"
-          title="Start"
-        >
-          <Play className="h-3 w-3" />
-          Start
-        </button>
-        <button
-          onClick={() => onControl(name.toLowerCase(), 'stop')}
-          disabled={!isRunning}
-          className="btn btn-danger btn-sm flex items-center gap-1 flex-1"
-          title="Stop"
-        >
-          <Square className="h-3 w-3" />
-          Stop
-        </button>
-        <button
-          onClick={() => onControl(name.toLowerCase(), 'restart')}
-          className="btn btn-secondary btn-sm flex items-center gap-1 flex-1"
-          title="Restart"
-        >
-          <RotateCw className="h-3 w-3" />
-          Restart
-        </button>
-      </div>
-    </div>
-  )
-}
-
 export default function SystemControl() {
-  const [health, setHealth] = useState(null)
   const [metrics, setMetrics] = useState(null)
   const [dbStats, setDbStats] = useState(null)
   const [systemInfo, setSystemInfo] = useState(null)
@@ -118,35 +25,24 @@ export default function SystemControl() {
   // LLM Provider state
   const [llmConfig, setLlmConfig] = useState(null)
   const [llmForm, setLlmForm] = useState({
-    provider: 'lm_studio',
-    lm_studio_base_url: '',
-    lm_studio_model: '',
-    gemini_web_secure_1psid: '',
-    gemini_web_secure_1psidts: '',
-    gemini_web_model: 'unspecified',
+    provider: 'deepseek',
     deepseek_api_key: '',
     deepseek_model: 'deepseek-chat',
   })
   const [llmSaving, setLlmSaving] = useState(false)
   const [llmTesting, setLlmTesting] = useState(false)
   const [llmTestResult, setLlmTestResult] = useState(null)
-  const [showPsid, setShowPsid] = useState(false)
-  const [showPsidts, setShowPsidts] = useState(false)
   const [showDeepseekKey, setShowDeepseekKey] = useState(false)
-  const [geminiModels, setGeminiModels] = useState([])
-  const [geminiModelSaving, setGeminiModelSaving] = useState(false)
 
   const fetchData = async () => {
     try {
       setLoading(true)
-      const [healthRes, metricsRes, dbStatsRes, infoRes] = await Promise.all([
-        systemAPI.health(),
+      const [metricsRes, dbStatsRes, infoRes] = await Promise.all([
         systemAPI.metrics().catch(() => ({ data: null })),
         systemAPI.databaseStats().catch(() => ({ data: null })),
         systemAPI.info().catch(() => ({ data: null })),
       ])
 
-      setHealth(healthRes.data)
       setMetrics(metricsRes.data)
       setDbStats(dbStatsRes.data)
       setSystemInfo(infoRes.data)
@@ -162,17 +58,10 @@ export default function SystemControl() {
       const res = await llmAPI.getConfig()
       setLlmConfig(res.data)
       setLlmForm({
-        provider: res.data.provider,
-        lm_studio_base_url: res.data.lm_studio_base_url || '',
-        lm_studio_model: res.data.lm_studio_model || '',
-        gemini_web_secure_1psid: res.data.gemini_web_secure_1psid || '',
-        gemini_web_secure_1psidts: res.data.gemini_web_secure_1psidts || '',
-        gemini_web_model: res.data.gemini_web_model || 'unspecified',
-        deepseek_api_key: res.data.deepseek_api_key || '',
+        provider: 'deepseek',
+        deepseek_api_key: '',
         deepseek_model: res.data.deepseek_model || 'deepseek-chat',
       })
-      // Load model list từ server (trả về dynamic list hoặc fallback)
-      llmAPI.listModels().then((r) => setGeminiModels(r.data.models || [])).catch(() => {})
     } catch (err) {
       console.error('Failed to load LLM config', err)
     }
@@ -182,20 +71,16 @@ export default function SystemControl() {
     setLlmSaving(true)
     setLlmTestResult(null)
     try {
-      const payload = { provider: llmForm.provider }
-      if (llmForm.provider === 'lm_studio') {
-        payload.lm_studio_base_url = llmForm.lm_studio_base_url
-        payload.lm_studio_model = llmForm.lm_studio_model
-      } else if (llmForm.provider === 'gemini_web') {
-        payload.gemini_web_secure_1psid = llmForm.gemini_web_secure_1psid
-        payload.gemini_web_secure_1psidts = llmForm.gemini_web_secure_1psidts
-        payload.gemini_web_model = llmForm.gemini_web_model
-      } else if (llmForm.provider === 'deepseek') {
-        payload.deepseek_api_key = llmForm.deepseek_api_key
-        payload.deepseek_model = llmForm.deepseek_model
+      const payload = {
+        provider: 'deepseek',
+        deepseek_model: llmForm.deepseek_model,
+      }
+      if (llmForm.deepseek_api_key.trim()) {
+        payload.deepseek_api_key = llmForm.deepseek_api_key.trim()
       }
       const res = await llmAPI.switchProvider(payload)
       setLlmConfig(res.data)
+      setLlmForm((current) => ({ ...current, deepseek_api_key: '' }))
       toast.success('LLM provider cập nhật thành công!')
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Lưu thất bại')
@@ -210,29 +95,10 @@ export default function SystemControl() {
     try {
       const res = await llmAPI.test()
       setLlmTestResult(res.data)
-      // Sau khi test thành công gemini_web → load danh sách model
-      if (res.data.success && llmForm.provider === 'gemini_web') {
-        const mr = await llmAPI.listModels().catch(() => null)
-        if (mr) setGeminiModels(mr.data.models || [])
-      }
     } catch (err) {
       setLlmTestResult({ success: false, error: err.response?.data?.detail || String(err) })
     } finally {
       setLlmTesting(false)
-    }
-  }
-
-  const handleGeminiModelSave = async (modelId) => {
-    setGeminiModelSaving(true)
-    try {
-      const res = await llmAPI.switchProvider({ provider: 'gemini_web', gemini_web_model: modelId })
-      setLlmConfig(res.data)
-      setLlmForm((f) => ({ ...f, gemini_web_model: modelId }))
-      toast.success(`Đã đặt default model: ${modelId}`)
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Lưu model thất bại')
-    } finally {
-      setGeminiModelSaving(false)
     }
   }
 
@@ -260,17 +126,6 @@ export default function SystemControl() {
 
     return () => clearInterval(interval)
   }, [autoRefresh])
-
-  const handleServiceControl = async (service, action) => {
-    try {
-      toast.loading(`${action}ing ${service}...`, { id: 'control' })
-      await systemAPI.serviceControl({ service, action })
-      toast.success(`${service} ${action}ed!`, { id: 'control' })
-      setTimeout(fetchData, 2000) // Refresh after 2s
-    } catch (error) {
-      toast.error(`Failed to ${action} ${service}!`, { id: 'control' })
-    }
-  }
 
   const handleClearCache = async (cacheType) => {
     if (!confirm(`Clear ${cacheType} cache?`)) return
@@ -312,48 +167,12 @@ export default function SystemControl() {
         </div>
       </div>
 
-      {loading && !health ? (
+      {loading && !metrics && !dbStats && !systemInfo ? (
         <div className="flex items-center justify-center py-12">
           <RefreshCw className="h-8 w-8 animate-spin text-primary-600" />
         </div>
       ) : (
         <>
-          {/* Overall Status */}
-          <div className="card">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                  System Status
-                </h2>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  Overall system health
-                </p>
-              </div>
-              <span
-                className={`badge text-lg ${
-                  health?.overall_status === 'healthy' ? 'badge-success' : 'badge-danger'
-                }`}
-              >
-                {health?.overall_status === 'healthy' ? '✓ Healthy' : '⚠ Degraded'}
-              </span>
-            </div>
-          </div>
-
-          {/* Services */}
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Services</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {health?.services?.map((service) => (
-                <ServiceCard
-                  key={service.name}
-                  name={service.name.toUpperCase()}
-                  status={service}
-                  onControl={handleServiceControl}
-                />
-              ))}
-            </div>
-          </div>
-
           {/* System Metrics */}
           {metrics && (
             <div>
@@ -538,9 +357,6 @@ export default function SystemControl() {
                 </label>
                 <div className="flex flex-wrap gap-3">
                   {[
-                    { id: 'lm_studio', label: 'LM Studio', desc: 'Local (host)' },
-                    { id: 'llama',     label: 'Llama.cpp',  desc: 'Docker service' },
-                    { id: 'gemini_web', label: '✨ Gemini Web', desc: 'Cookie-based, free' },
                     { id: 'deepseek', label: '🤖 DeepSeek', desc: 'API key' },
                   ].map((p) => (
                     <label
@@ -568,119 +384,6 @@ export default function SystemControl() {
                 </div>
               </div>
 
-              {/* LM Studio fields */}
-              {llmForm.provider === 'lm_studio' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Base URL</label>
-                    <input
-                      type="text"
-                      value={llmForm.lm_studio_base_url}
-                      onChange={(e) => setLlmForm((f) => ({ ...f, lm_studio_base_url: e.target.value }))}
-                      placeholder="http://host.docker.internal:11434"
-                      className="input w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Model name</label>
-                    <input
-                      type="text"
-                      value={llmForm.lm_studio_model}
-                      onChange={(e) => setLlmForm((f) => ({ ...f, lm_studio_model: e.target.value }))}
-                      placeholder="google/gemma-4-e4b"
-                      className="input w-full"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Gemini Web fields */}
-              {llmForm.provider === 'gemini_web' && (
-                <div className="space-y-4">
-                  <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 text-sm text-amber-800 dark:text-amber-200">
-                    Cookie lấy từ <strong>gemini.google.com</strong>: F12 → Network → Any request → Headers → Copy <code>__Secure-1PSID</code> và <code>__Secure-1PSIDTS</code>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">__Secure-1PSID</label>
-                    <div className="relative">
-                      <input
-                        type={showPsid ? 'text' : 'password'}
-                        value={llmForm.gemini_web_secure_1psid}
-                        onChange={(e) => setLlmForm((f) => ({ ...f, gemini_web_secure_1psid: e.target.value }))}
-                        placeholder="Paste cookie value..."
-                        className="input w-full pr-10"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPsid((v) => !v)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                      >
-                        {showPsid ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">__Secure-1PSIDTS <span className="text-gray-400">(optional)</span></label>
-                    <div className="relative">
-                      <input
-                        type={showPsidts ? 'text' : 'password'}
-                        value={llmForm.gemini_web_secure_1psidts}
-                        onChange={(e) => setLlmForm((f) => ({ ...f, gemini_web_secure_1psidts: e.target.value }))}
-                        placeholder="Paste cookie value..."
-                        className="input w-full pr-10"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPsidts((v) => !v)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                      >
-                        {showPsidts ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  </div>
-                  {/* Model selector — luôn hiển thị, dùng list động nếu có */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      Model
-                      {geminiModels.length > 0 && (
-                        <span className="ml-2 text-xs text-green-600 dark:text-green-400">(danh sách từ server)</span>
-                      )}
-                    </label>
-                    {geminiModels.length > 0 ? (
-                      <select
-                        value={llmForm.gemini_web_model}
-                        onChange={(e) => setLlmForm((f) => ({ ...f, gemini_web_model: e.target.value }))}
-                        className="input w-full"
-                      >
-                        {geminiModels.map((m) => (
-                          <option key={m.id} value={m.id}>{m.name || m.id}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <select
-                        value={llmForm.gemini_web_model}
-                        onChange={(e) => setLlmForm((f) => ({ ...f, gemini_web_model: e.target.value }))}
-                        className="input w-full"
-                      >
-                        <option value="unspecified">Unspecified (default)</option>
-                        <option value="gemini-3-pro">Gemini 3 Pro</option>
-                        <option value="gemini-3-flash">Gemini 3 Flash</option>
-                        <option value="gemini-3-flash-thinking">Gemini 3 Flash Thinking</option>
-                        <option value="gemini-3-pro-plus">Gemini 3 Pro Plus</option>
-                        <option value="gemini-3-flash-plus">Gemini 3 Flash Plus</option>
-                        <option value="gemini-3-flash-thinking-plus">Gemini 3 Flash Thinking Plus</option>
-                        <option value="gemini-3-pro-advanced">Gemini 3 Pro Advanced</option>
-                        <option value="gemini-3-flash-advanced">Gemini 3 Flash Advanced</option>
-                        <option value="gemini-3-flash-thinking-advanced">Gemini 3 Flash Thinking Advanced</option>
-                      </select>
-                    )}
-                    <p className="text-xs text-gray-400 mt-1">
-                      Danh sách models sẽ được cập nhật động sau khi Test kết nối thành công.
-                    </p>
-                  </div>
-                </div>
-              )}
-
               {/* DeepSeek fields */}
               {llmForm.provider === 'deepseek' && (
                 <div className="space-y-4">
@@ -694,7 +397,7 @@ export default function SystemControl() {
                         type={showDeepseekKey ? 'text' : 'password'}
                         value={llmForm.deepseek_api_key}
                         onChange={(e) => setLlmForm((f) => ({ ...f, deepseek_api_key: e.target.value }))}
-                        placeholder="sk-..."
+                        placeholder={llmConfig?.deepseek_api_key_hint || 'sk-...'}
                         className="input w-full pr-10"
                       />
                       <button
@@ -705,6 +408,11 @@ export default function SystemControl() {
                         {showDeepseekKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </button>
                     </div>
+                    {llmConfig?.deepseek_api_key_configured && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        API key đã được lưu. Để trống nếu không muốn thay đổi.
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Model</label>
@@ -767,36 +475,6 @@ export default function SystemControl() {
                         {llmTestResult.response_preview && (
                           <div className="text-green-700 dark:text-green-300 mt-1 font-mono text-xs">
                             &quot;{llmTestResult.response_preview}&quot;
-                          </div>
-                        )}
-                        {/* Gemini model picker — hiện sau khi test thành công */}
-                        {llmForm.provider === 'gemini_web' && geminiModels.length > 0 && (
-                          <div className="mt-3 pt-3 border-t border-green-200 dark:border-green-700">
-                            <p className="font-medium text-green-800 dark:text-green-200 mb-2">Chọn model mặc định:</p>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                              {geminiModels.map((m) => (
-                                <button
-                                  key={m.id}
-                                  disabled={geminiModelSaving}
-                                  onClick={() => handleGeminiModelSave(m.id)}
-                                  className={`flex items-center justify-between px-3 py-2 rounded-lg border text-sm transition-colors ${
-                                    llmForm.gemini_web_model === m.id
-                                      ? 'bg-green-600 border-green-600 text-white font-semibold'
-                                      : 'bg-white dark:bg-gray-800 border-green-300 dark:border-green-600 text-gray-800 dark:text-gray-200 hover:bg-green-50 dark:hover:bg-green-900/30'
-                                  }`}
-                                >
-                                  <span>{m.name}</span>
-                                  {llmForm.gemini_web_model === m.id && (
-                                    <CheckCircle className="h-4 w-4 ml-2 shrink-0" />
-                                  )}
-                                </button>
-                              ))}
-                            </div>
-                            {geminiModelSaving && (
-                              <p className="text-xs text-green-600 dark:text-green-400 mt-2 flex items-center gap-1">
-                                <RefreshCw className="h-3 w-3 animate-spin" /> Đang lưu...
-                              </p>
-                            )}
                           </div>
                         )}
                       </>

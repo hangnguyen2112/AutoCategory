@@ -16,8 +16,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
-from database import get_db
+from database import SessionLocal, get_db
 from dependencies import require_api_key
 from models import APIKey
 from services import attribute_selector, classifier, image_analyzer
@@ -94,6 +95,12 @@ def _attach_attributes(result: dict, category_result: dict, db: Session) -> dict
         "attributes": attributes,
     }
     return result
+
+
+def _load_attributes(category_id: int) -> list[dict]:
+    """Load and detach attributes inside a short, self-contained DB session."""
+    with SessionLocal() as db:
+        return get_attributes_for_category(category_id, db)
 
 
 # ─────────────────────────────────────────────
@@ -284,8 +291,9 @@ def _sse(data: dict) -> str:
     "/generate/stream",
     summary="[Streaming] Phân tích ảnh → phân loại → thuộc tính (SSE)",
     response_class=StreamingResponse,
+    dependencies=[Depends(require_api_key)],
 )
-async def generate_stream(req: GenerateStreamRequest, db: Session = Depends(get_db), api_key: APIKey = Depends(require_api_key)):
+async def generate_stream(req: GenerateStreamRequest):
     """
     Streaming pipeline qua Server-Sent Events (SSE).
 
@@ -389,7 +397,10 @@ async def generate_stream(req: GenerateStreamRequest, db: Session = Depends(get_
         if category_id:
             yield _sse({"step": "loading_attributes", "message": "Đang tải thuộc tính…"})
             try:
-                attributes = get_attributes_for_category(category_id, db)
+                # Never carry a request-scoped Session across SSE yields or LLM
+                # awaits. The query runs in a worker thread and the connection is
+                # returned to the pool before DeepSeek processing starts.
+                attributes = await run_in_threadpool(_load_attributes, category_id)
                 if req.full:
                     # AI Đầy đủ: LLM thấy toàn bộ options và chọn trực tiếp
                     selected_values = await suggest_field_values(

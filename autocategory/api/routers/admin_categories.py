@@ -336,8 +336,8 @@ async def generate_descriptions(
     for f in all_fields:
         fields_by_cat.setdefault(f.category_id, []).append(f.field_label)
 
-    updated = 0
     skipped = 0
+    targets: list[dict] = []
     for cat in cats:
         if not force:
             desc = (cat.description or "").strip()
@@ -345,20 +345,39 @@ async def generate_descriptions(
             if len(desc) > 40 and not has_marketing:
                 skipped += 1
                 continue
+        targets.append({
+            "id": cat.id,
+            "name": cat.name,
+            "path": _path(cat.id),
+            "field_labels": fields_by_cat.get(cat.id, []),
+            "is_leaf": cat.id not in parent_ids_set,
+        })
+
+    total = len(cats)
+    # Release the read-only transaction before the sequential DeepSeek calls.
+    db.rollback()
+
+    updates: list[dict] = []
+    for item in targets:
         try:
-            path = _path(cat.id)
-            field_labels = fields_by_cat.get(cat.id, [])
-            is_leaf = cat.id not in parent_ids_set
-            new_desc = await generate_category_description(cat.name, path, field_labels, is_leaf=is_leaf)
+            new_desc = await generate_category_description(
+                item["name"],
+                item["path"],
+                item["field_labels"],
+                is_leaf=item["is_leaf"],
+            )
             if new_desc:
-                cat.description = new_desc
-                updated += 1
+                updates.append({"id": item["id"], "description": new_desc})
+            else:
+                skipped += 1
         except Exception as exc:
-            logger.warning("generate_description failed for %s: %s", cat.name, exc)
+            logger.warning("generate_description failed for %s: %s", item["name"], exc)
             skipped += 1
 
-    db.commit()
-    return {"updated": updated, "skipped": skipped, "total": len(cats)}
+    if updates:
+        db.bulk_update_mappings(CategoryModel, updates)
+        db.commit()
+    return {"updated": len(updates), "skipped": skipped, "total": total}
 
 
 # ── Rebuild job state (in-memory + Redis persistence) ────────────────────────
@@ -419,8 +438,10 @@ async def _run_rebuild(request_force: bool, request_only_leaf: bool, admin_id: i
     _job_save(_rebuild_job)
     try:
         start_time = _time.time()
-        db = SessionLocal()
-        try:
+        # Snapshot all required DB data first. ORM instances never cross an
+        # await boundary, so this connection is returned before embedding or
+        # Qdrant network work begins.
+        with SessionLocal() as db:
             all_cats_orm = (
                 db.query(CategoryModel)
                 .filter(CategoryModel.is_active == 1)
@@ -472,20 +493,6 @@ async def _run_rebuild(request_force: bool, request_only_leaf: bool, admin_id: i
                 })
                 texts.append(search_text)
 
-            # ── Step 2: embed ALL vectors first (small batches to avoid OOM) ──
-            all_vecs: list[list[float]] = []
-            for i in range(0, len(texts), 8):
-                vecs = await embed_texts(texts[i:i + 8])
-                all_vecs.extend(vecs)
-            logger.info("Embeddings ready: %d categories", len(all_vecs))
-
-            # ── Step 3: atomic swap – delete old, upsert new ──────────────────
-            if request_force:
-                await qs.delete_collection()
-            await qs.ensure_collection()
-            indexed = await qs.upsert_categories(profiles, all_vecs) if profiles else 0
-
-            # ── Step 4: attribute options (embed first, then replace) ─────────
             fields_all = db.query(CategoryField).all()
             option_dicts: list[dict] = []
             attr_texts: list[str] = []
@@ -506,23 +513,38 @@ async def _run_rebuild(request_force: bool, request_only_leaf: bool, admin_id: i
                     })
                     attr_texts.append(embed_text)
 
-            attr_vectors: list[list[float]] = []
-            for i in range(0, len(attr_texts), 64):
-                vecs = await embed_texts(attr_texts[i:i + 64])
-                attr_vectors.extend(vecs)
-            logger.info("Attr embeddings ready: %d options", len(attr_vectors))
+        # ── Step 2: embed ALL vectors first (small batches to avoid OOM) ──
+        all_vecs: list[list[float]] = []
+        for i in range(0, len(texts), 8):
+            vecs = await embed_texts(texts[i:i + 8])
+            all_vecs.extend(vecs)
+        logger.info("Embeddings ready: %d categories", len(all_vecs))
 
-            # Atomic swap for attributes
-            if request_force:
-                try:
-                    await qs.delete_attr_collection()
-                except Exception:
-                    pass
-            await qs.ensure_attr_collection()
-            attrs_indexed = await qs.upsert_attribute_options(option_dicts, attr_vectors) if option_dicts else 0
+        # ── Step 3: replace category vectors ──────────────────────────────
+        if request_force:
+            await qs.delete_collection()
+        await qs.ensure_collection()
+        indexed = await qs.upsert_categories(profiles, all_vecs) if profiles else 0
 
-            time_taken = round(_time.time() - start_time, 2)
+        # ── Step 4: embed and replace attribute options ───────────────────
+        attr_vectors: list[list[float]] = []
+        for i in range(0, len(attr_texts), 64):
+            vecs = await embed_texts(attr_texts[i:i + 64])
+            attr_vectors.extend(vecs)
+        logger.info("Attr embeddings ready: %d options", len(attr_vectors))
 
+        if request_force:
+            try:
+                await qs.delete_attr_collection()
+            except Exception:
+                pass
+        await qs.ensure_attr_collection()
+        attrs_indexed = await qs.upsert_attribute_options(option_dicts, attr_vectors) if option_dicts else 0
+
+        time_taken = round(_time.time() - start_time, 2)
+
+        # A separate short write transaction records completion.
+        with SessionLocal() as db:
             sync_history = CategorySyncHistory(
                 source="rebuild_index",
                 sync_type="manual",
@@ -534,16 +556,14 @@ async def _run_rebuild(request_force: bool, request_only_leaf: bool, admin_id: i
             db.add(sync_history)
             db.commit()
 
-            _rebuild_job["status"] = "done"
-            _rebuild_job["result"] = {
-                "categories_indexed": indexed,
-                "attributes_indexed": attrs_indexed,
-                "time_taken_seconds": time_taken,
-            }
-            _job_save(_rebuild_job)
-            logger.info("rebuild_qdrant_index done: %s cats, %s attrs, %.1fs", indexed, attrs_indexed, time_taken)
-        finally:
-            db.close()
+        _rebuild_job["status"] = "done"
+        _rebuild_job["result"] = {
+            "categories_indexed": indexed,
+            "attributes_indexed": attrs_indexed,
+            "time_taken_seconds": time_taken,
+        }
+        _job_save(_rebuild_job)
+        logger.info("rebuild_qdrant_index done: %s cats, %s attrs, %.1fs", indexed, attrs_indexed, time_taken)
     except Exception as exc:
         import traceback
         _rebuild_job["status"] = "error"
@@ -556,7 +576,6 @@ async def _run_rebuild(request_force: bool, request_only_leaf: bool, admin_id: i
 async def rebuild_qdrant_index(
     current_admin: CurrentAdminUser,
     request: CategoryRebuildIndexRequest,
-    db: Session = Depends(get_db)
 ):
     """
     Rebuild Qdrant vector index from DB categories table (runs as background task).
