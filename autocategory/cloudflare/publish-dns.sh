@@ -55,6 +55,10 @@ assert_success() {
 echo "==> Waiting for tunnel $TUNNEL_ID to have an active connector"
 elapsed=0
 while :; do
+  if [ -n "${CLOUDFLARED_PID:-}" ] && ! kill -0 "$CLOUDFLARED_PID" 2>/dev/null; then
+    echo "ERROR: cloudflared exited before the tunnel became ready; DNS was not changed."
+    exit 1
+  fi
   tunnel=$(api_call GET "accounts/$CF_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID")
   assert_success "$tunnel" "checking tunnel status"
   tunnel_status=$(echo "$tunnel" | jq -r '.result.status // "unknown"')

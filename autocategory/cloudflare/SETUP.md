@@ -56,14 +56,15 @@ Docker tự động:
 - Tìm chính xác `CF_TUNNEL_NAME` và dùng lại remotely-managed tunnel nếu có.
 - Chỉ tạo tunnel khi chưa có; không bao giờ xóa tunnel cũ.
 - Merge hostname vào remote ingress mà không xóa các hostname khác.
-- Lấy cùng tunnel token vào volume cục bộ của từng máy.
-- Chạy `cloudflared` như một replica mới.
-- `cf-publish` chờ tunnel có connector rồi tự tạo/cập nhật CNAME.
+- Trong cùng một container: lấy token, chạy `cloudflared` như một replica,
+  chờ connector online rồi tự tạo/cập nhật CNAME.
+- Container tiếp tục chạy để giám sát tiến trình `cloudflared`; Docker tự restart
+  toàn bộ quy trình nếu connector thoát.
 
-Xem tunnel đã chọn và kết quả publish DNS:
+Xem tunnel đã chọn, connector và kết quả publish DNS:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.cloudflare-ha.yml logs cf-setup cf-publish
+docker compose -f docker-compose.yml -f docker-compose.cloudflare-ha.yml logs -f cloudflared
 ```
 
 Thông thường không cần cấu hình `CF_TUNNEL_ID`. Chỉ điền UUID nếu tài khoản có
@@ -100,8 +101,8 @@ tục là một replica đang hoạt động.
 
 1. Nếu tunnel cũ là local và trùng tên, chọn một tên remote mới, ví dụ
    `CF_TUNNEL_NAME=autocategory-ha`. Script không tự chuyển đổi hay xóa tunnel local.
-2. Deploy bằng HA overlay. `cf-setup` tạo/reuse tunnel remote, `cloudflared` kết
-   nối, sau đó `cf-publish` mới tự chuyển CNAME production sang tunnel đã online.
+2. Deploy bằng HA overlay. Service `cloudflared` duy nhất tạo/reuse tunnel remote,
+   kết nối, rồi tự chuyển CNAME production sau khi tunnel đã online.
 3. Chạy cùng cấu hình `CF_TUNNEL_NAME` trên máy mới. Máy mới tự nhận tunnel và
    trở thành replica thứ hai; không có tài nguyên nào của máy cũ bị xóa.
 4. Chỉ sau khi các replica mới hoạt động mới cân nhắc xóa tunnel local cũ bằng

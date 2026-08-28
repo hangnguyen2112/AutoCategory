@@ -138,36 +138,6 @@ services:
       retries: 5
       start_period: 10s
 
-  # Cloudflare Tunnel setup (run once, then stop)
-  cf-setup:
-    build:
-      context: ./cloudflare
-      dockerfile: Dockerfile.setup
-    container_name: autocategory_cf_setup
-    env_file: .env
-    volumes:
-      - cf_runtime:/cf-runtime
-    restart: "no"
-    profiles:
-      - setup
-
-  # Cloudflare Tunnel daemon
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: autocategory_tunnel
-    restart: unless-stopped
-    logging: *default-logging
-    command: tunnel --config /cf-runtime/config.yml run
-    volumes:
-      - cf_runtime:/cf-runtime:ro
-    environment:
-      - TZ=${TZ:-Asia/Ho_Chi_Minh}
-    depends_on:
-      nginx:
-        condition: service_started
-    profiles:
-      - tunnel
-
   nginx:
     image: nginx:alpine
     container_name: autocategory_nginx

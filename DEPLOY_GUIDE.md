@@ -59,9 +59,9 @@ CORS_ORIGINS=http://localhost,http://localhost:3000,http://localhost:3001,https:
 
 ### Option 1: Deploy HA qua Cloudflare Tunnel (Khuyên Dùng)
 
-Chạy cùng lệnh này trên mọi máy Docker. `cf-setup` tự tìm tunnel chính xác theo
-`CF_TUNNEL_NAME`, chỉ tạo nếu chưa có; các máy sau lấy cùng token và trở thành
-replica, không xóa tunnel/máy cũ.
+Chạy cùng lệnh này trên mọi máy Docker. Service `cloudflared` duy nhất tự tìm
+tunnel chính xác theo `CF_TUNNEL_NAME`, chỉ tạo nếu chưa có; các máy sau lấy cùng
+token và trở thành replica, không xóa tunnel/máy cũ.
 
 ```bash
 cd autocategory
@@ -70,8 +70,8 @@ docker compose -f docker-compose.yml -f docker-compose.cloudflare-ha.yml up -d -
 
 Mọi replica phải chạy cùng ứng dụng và phục vụ được `http://nginx:80`.
 Cloudflare Tunnel replica cung cấp HA/failover, không bảo đảm round-robin.
-`cf-publish` tự chờ connector online rồi mới tạo/cập nhật CNAME; không cần thao
-tác publish DNS thủ công và thông thường không cần cấu hình `CF_TUNNEL_ID`.
+Service tự chờ connector online rồi mới tạo/cập nhật CNAME; không cần thao tác
+publish DNS thủ công và thông thường không cần cấu hình `CF_TUNNEL_ID`.
 
 ### Option 2: Deploy Thủ Công
 
@@ -227,8 +227,8 @@ docker-compose up -d --build api
 # Check tunnel logs
 docker-compose logs cloudflared
 
-# Setup lại replica hiện tại và tự kiểm tra/publish DNS, không xóa tunnel
-docker compose -f docker-compose.yml -f docker-compose.cloudflare-ha.yml up -d --build cf-setup cloudflared cf-publish
+# Dựng lại service tunnel duy nhất; tự setup, kết nối và publish DNS
+docker compose -f docker-compose.yml -f docker-compose.cloudflare-ha.yml up -d --build --force-recreate cloudflared
 ```
 
 ### Admin Dashboard 404
