@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
+from difflib import SequenceMatcher
 from typing import Any
 
 import httpx
@@ -446,6 +448,130 @@ def _compute_warranty_hint(text: str, today: "datetime") -> str:
     return ""
 
 
+def _normalize_option_text(value: Any) -> str:
+    """Normalize user text and option labels for deterministic matching."""
+    text = unicodedata.normalize("NFKD", str(value or "")).casefold()
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.replace("+", " plus ")
+    return " ".join(re.findall(r"[a-z0-9]+", text))
+
+
+def _option_names(option: dict) -> list[str]:
+    names: list[str] = []
+    for raw in (option.get("value"), option.get("label")):
+        normalized = _normalize_option_text(raw)
+        if normalized and normalized not in names:
+            names.append(normalized)
+    return names
+
+
+def _contains_option_name(normalized_text: str, option_name: str) -> bool:
+    if not option_name:
+        return False
+    if f" {option_name} " in f" {normalized_text} ":
+        return True
+    compact_name = option_name.replace(" ", "")
+    compact_text = normalized_text.replace(" ", "")
+    return (
+        len(compact_name) >= 4
+        and any(ch.isdigit() for ch in compact_name)
+        and compact_name in compact_text
+    )
+
+
+def _find_explicit_option_value(field: dict, title: str, description: str) -> str | None:
+    """Return the longest unambiguous option explicitly present in product text."""
+    normalized_text = _normalize_option_text(f"{title} {description}")
+    matches: list[tuple[int, int, str]] = []
+    for option in field.get("field_options") or []:
+        value = option.get("value")
+        if value is None:
+            continue
+        for name in _option_names(option):
+            if _contains_option_name(normalized_text, name):
+                matches.append((len(name.split()), len(name), str(value)))
+                break
+    if not matches:
+        return None
+    matches.sort(reverse=True)
+    best_shape = matches[0][:2]
+    best_values = {value for words, chars, value in matches if (words, chars) == best_shape}
+    if len(best_values) != 1:
+        return None
+
+    best_value = next(iter(best_values))
+    # A short exact suffix may coexist with a more specific typo-tolerant model.
+    # Let the LLM disambiguate instead of locking in the shorter value.
+    options = field.get("field_options") or []
+    if len(options) > 100 and best_shape[0] <= 2:
+        for option in options:
+            if str(option.get("value")) == best_value:
+                continue
+            if max((len(name) for name in _option_names(option)), default=0) <= best_shape[1]:
+                continue
+            if _option_relevance(option, normalized_text) >= 0.85:
+                return None
+    return best_value
+
+
+def _option_relevance(option: dict, normalized_text: str) -> float:
+    """Rank a large option list by lexical evidence in title/description."""
+    text_tokens = normalized_text.split()
+    text_token_set = set(text_tokens)
+    best = 0.0
+    for name in _option_names(option):
+        if _contains_option_name(normalized_text, name):
+            best = max(best, 10.0 + len(name) / 1000)
+            continue
+        name_tokens = name.split()
+        if not name_tokens:
+            continue
+        overlap = len(set(name_tokens) & text_token_set) / len(set(name_tokens))
+        if overlap:
+            best = max(best, overlap)
+        for window_size in {max(1, len(name_tokens) - 1), len(name_tokens), len(name_tokens) + 1}:
+            for start in range(0, max(0, len(text_tokens) - window_size + 1)):
+                window = " ".join(text_tokens[start : start + window_size])
+                best = max(best, SequenceMatcher(None, name, window).ratio())
+    return best
+
+
+def _options_for_prompt(field: dict, title: str, description: str) -> list[dict]:
+    """Keep complete small lists; shortlist large lists by product-text relevance."""
+    options = field.get("field_options") or []
+    if len(options) <= 100:
+        return options
+
+    normalized_text = _normalize_option_text(f"{title} {description}")
+    ranked = [
+        (_option_relevance(option, normalized_text), index, option)
+        for index, option in enumerate(options)
+    ]
+    relevant = [item for item in ranked if item[0] >= 0.75]
+    relevant.sort(
+        key=lambda item: (
+            -item[0],
+            not bool(item[2].get("featured")),
+            item[2].get("sort_order", 0),
+            str(item[2].get("label") or item[2].get("value") or "").casefold(),
+            item[1],
+        )
+    )
+    return [option for _, _, option in relevant[:50]]
+
+
+def _canonical_option_value(field: dict, raw_value: Any) -> str | None:
+    """Validate an LLM value against the complete option list."""
+    normalized = _normalize_option_text(raw_value)
+    if not normalized:
+        return None
+    for option in field.get("field_options") or []:
+        if normalized in _option_names(option):
+            value = option.get("value")
+            return str(value) if value is not None else None
+    return None
+
+
 def _prefilter_conditional_fields(fields: list[dict], title: str, description: str) -> list[dict]:
     """Với các nhóm field conditional cùng parent (vd: dong_may_apple, dong_may_dell, dong_may_asus
     đều conditional on field 'hang'), detect brand từ title/description và chỉ giữ lại field phù hợp.
@@ -455,7 +581,8 @@ def _prefilter_conditional_fields(fields: list[dict], title: str, description: s
     - +10 nếu parent_field_value (brand name) xuất hiện trong text
     - +5 nếu bất kỳ option value nào của field match với text (match dài hơn ưu tiên hơn)
     Nếu nhóm có winner rõ ràng (score > 0) → chỉ giữ field đó, drop hết field còn lại trong nhóm.
-    Nếu không detect được → giữ nguyên tất cả (LLM tự chọn, cap 15 options mỗi field).
+    Nếu không detect được → giữ nguyên các field; danh sách options lớn sẽ được
+    xếp hạng theo độ khớp với nội dung ở bước tạo prompt.
     """
     from collections import defaultdict
 
@@ -515,7 +642,7 @@ def _prefilter_conditional_fields(fields: list[dict], title: str, description: s
             )
             result.append(best_field)
         else:
-            # Không detect được brand → giữ tất cả, cap 15 options/field để bảo vệ token limit
+            # Không detect được brand → giữ tất cả để bước xếp hạng options xử lý.
             result.extend(group)
 
     return result
@@ -547,33 +674,50 @@ async def suggest_field_values(
     # product text and drop the rest. This can cut hundreds of irrelevant options from the prompt.
     fields = _prefilter_conditional_fields(fields, title, description or "")
 
+    # Resolve values explicitly written in product text before involving the LLM.
+    all_results: dict[str, str | None] = {}
+    unresolved_fields: list[dict] = []
+    for field in fields:
+        explicit_value = _find_explicit_option_value(field, title, description or "")
+        if explicit_value is not None:
+            all_results[field["field_key"]] = explicit_value
+        else:
+            unresolved_fields.append(field)
+    fields = unresolved_fields
+
     # Batch fields to avoid exceeding llama ctx-size (8192 tokens)
     # ~25 fields per batch is safe given options can be verbose
     BATCH_SIZE = 25
-    all_results: dict[str, str | None] = {}
 
     for batch_start in range(0, len(fields), BATCH_SIZE):
         batch = fields[batch_start : batch_start + BATCH_SIZE]
 
         fields_text_parts = []
+        prompt_fields: list[dict] = []
         for f in batch:
             opts = f.get("field_options") or []
             if opts:
-                # Conditional fields (parent_field_id set) đã được _prefilter chọn đúng brand
-                # → gửi toàn bộ options (cap 300) để LLM có thể match đúng model.
-                # Non-conditional hoặc unfiltered large lists → cap 15 để bảo vệ token limit.
-                if f.get("parent_field_id") is not None:
-                    max_opts = min(len(opts), 300)
-                else:
-                    max_opts = min(len(opts), 50) if len(opts) <= 50 else 15
-                opts_str = ", ".join(f"'{o.get('value')}' ({o.get('label')})" for o in opts[:max_opts])
+                prompt_options = _options_for_prompt(f, title, description or "")
+                if not prompt_options:
+                    logger.info(
+                        "Skipping large field '%s': no option has enough textual evidence",
+                        f.get("field_key"),
+                    )
+                    continue
+                opts_str = ", ".join(
+                    f"'{o.get('value')}' ({o.get('label')})" for o in prompt_options
+                )
                 fields_text_parts.append(
-                    f"- {f['field_key']} [{f['field_type']}] \"{f['field_label']}\": options=[{opts_str}]"
+                    f'- {f["field_key"]} [{f["field_type"]}] "{f["field_label"]}": options=[{opts_str}]'
                 )
             else:
                 fields_text_parts.append(
-                    f"- {f['field_key']} [{f['field_type']}] \"{f['field_label']}\""
+                    f'- {f["field_key"]} [{f["field_type"]}] "{f["field_label"]}"'
                 )
+            prompt_fields.append(f)
+
+        if not prompt_fields:
+            continue
 
         fields_text = "\n".join(fields_text_parts)
 
@@ -592,8 +736,17 @@ Hãy trả về JSON với key là field_key và value là giá trị phù hợp
             raw = await _chat(SYSTEM_SUGGEST_FIELDS, user_msg)
             result = _extract_json(raw)
             if result:
-                known_keys = {f["field_key"] for f in batch}
-                all_results.update({k: v for k, v in result.items() if k in known_keys})
+                fields_by_key = {f["field_key"]: f for f in prompt_fields}
+                for key, value in result.items():
+                    field = fields_by_key.get(key)
+                    if field is None or value is None or str(value).strip() == "":
+                        continue
+                    if field.get("field_options"):
+                        canonical = _canonical_option_value(field, value)
+                        if canonical is not None:
+                            all_results[key] = canonical
+                    else:
+                        all_results[key] = value
             else:
                 logger.warning("suggest_field_values batch %d returned non-JSON: %s", batch_start, raw[:200])
         except Exception as exc:

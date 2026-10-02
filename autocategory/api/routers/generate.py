@@ -418,7 +418,6 @@ async def generate_stream(req: GenerateStreamRequest):
                     )
                 yield _sse({
                     "step": "attributes",
-                    # "attributes": attributes,
                     "selected_values": selected_values,
                 })
             except Exception as exc:
@@ -436,3 +435,4 @@ async def generate_stream(req: GenerateStreamRequest):
             "Connection": "keep-alive",
         },
     )
+
