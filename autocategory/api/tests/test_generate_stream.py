@@ -46,3 +46,31 @@ async def test_stream_returns_attributes_and_selected_values(monkeypatch, full, 
     assert fields_event["selected_values"] == selected_values
     assert events[-1]["step"] == "done"
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("full", [False, True])
+async def test_text_stream_uses_original_facts_for_classification_and_attributes(monkeypatch, full):
+    original = "Bán máy ảnh, không kèm thẻ nhớ"
+    monkeypatch.setattr(generate, "understand_product", AsyncMock(return_value={
+        "suggested_title": "Máy ảnh kèm thẻ nhớ", "suggested_description": "Thẻ nhớ 64 GB",
+    }))
+    classify = AsyncMock(return_value={"selected_category": {"category_id": 8, "name": "Máy ảnh"}})
+    monkeypatch.setattr(generate.classifier, "classify_product", classify)
+    monkeypatch.setattr(generate, "_load_attributes", lambda cid: [])
+    suggest = AsyncMock(return_value={})
+    quick = AsyncMock(return_value={})
+    monkeypatch.setattr(generate, "suggest_field_values", suggest)
+    monkeypatch.setattr(generate.attribute_selector, "select_attributes", quick)
+    app = FastAPI()
+    app.include_router(generate.router, prefix="/api")
+    app.dependency_overrides[generate.require_api_key] = lambda: object()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/api/generate/stream", json={"title": original, "full": full})
+    assert response.status_code == 200
+    assert classify.await_args.kwargs["title"] == original
+    assert classify.await_args.kwargs["description"] == ""
+    assert classify.await_args.kwargs["understanding"]["suggested_title"] == "Máy ảnh kèm thẻ nhớ"
+    selected = suggest if full else quick
+    assert selected.await_args.kwargs["title"] == original
+    assert selected.await_args.kwargs["description"] == ""
+

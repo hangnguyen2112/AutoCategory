@@ -24,11 +24,14 @@ from typing import Any
 
 from services.embedder import embed_single
 from services.llm_service import extract_attribute_values, extract_attribute_values_direct
-from services import qdrant_service
+from services import qdrant_service, attribute_rules
+from config import settings
+from services import embedder, llm_service
+from services.result_cache import cache, taxonomy_version, mark_uncacheable
 
 logger = logging.getLogger(__name__)
 
-_OPT_MATCH_THRESHOLD = 0.70   # Qdrant cosine score để chấp nhận option
+_OPT_MATCH_THRESHOLD = 0.75
 _DIRECT_THRESHOLD = 20        # fields với ≤ n options → LLM chọn trực tiếp
 
 
@@ -74,20 +77,27 @@ async def _match_via_qdrant(
             continue
         if not field_id:
             continue
+        exact = attribute_rules.canonical_value(field, raw)
+        if exact is not None:
+            result[fkey] = exact
+            continue
         try:
             vec = await embed_single(raw)
             hits = await qdrant_service.search_attribute_options(
                 query_vector=vec,
                 field_id=field_id,
-                top_k=1,
+                top_k=2,
             )
-            if hits and hits[0]["score"] >= _OPT_MATCH_THRESHOLD:
-                result[fkey] = hits[0]["option_value"]
+            margin = hits[0]["score"] - hits[1]["score"] if len(hits) > 1 else 1.0
+            value = attribute_rules.canonical_value(field, hits[0].get("option_value")) if hits else None
+            if value is not None and hits[0]["score"] >= _OPT_MATCH_THRESHOLD and margin >= 0.05:
+                result[fkey] = value
                 logger.debug(
                     "qdrant match: field '%s' raw='%s' → '%s' (score=%.3f)",
                     fkey, raw, hits[0]["option_value"], hits[0]["score"],
                 )
         except Exception as exc:
+            mark_uncacheable()
             logger.warning("qdrant search failed for field '%s': %s", fkey, exc)
     return result
 
@@ -168,53 +178,15 @@ async def select_attributes(
     if not attributes or not (title or description):
         return {}
 
-    await _ensure_qdrant_ready()
-
-    # ── Pass 1: root fields ───────────────────────────────────────────────────
-    root_fields = [f for f in attributes if not f.get("parent_field_id")]
-    result = await _process_fields(root_fields, title, description)
-    logger.info("attribute_selector pass1: %s", result)
-
-    # ── Pass 2: conditional fields ────────────────────────────────────────────
-    # Ưu tiên lookup bằng omni_field_id nếu đã được lưu khi sync.
-    # Fallback: match parent_field_value với các giá trị đã chọn (cho data cũ chưa có omni_field_id).
-    omni_id_map: dict[int, dict] = {
-        f["omni_field_id"]: f
-        for f in attributes
-        if f.get("omni_field_id") is not None
-    }
-    selected_values_lower = {str(v).lower() for v in result.values() if v}
-
-    active_conditional: list[dict] = []
-    for f in attributes:
-        parent_omni_id = f.get("parent_field_id")
-        if not parent_omni_id:
-            continue
-        required_val = f.get("parent_field_value")
-        if not required_val:
-            continue
-
-        if omni_id_map:
-            # Đường chính: tìm parent field qua omni_field_id, lấy giá trị đã chọn của nó
-            parent_field = omni_id_map.get(parent_omni_id)
-            if parent_field:
-                selected_val = result.get(parent_field["field_key"])
-                if selected_val and str(selected_val).lower() == str(required_val).lower():
-                    active_conditional.append(f)
-                continue
-        # Fallback: so khớp parent_field_value với bất kỳ giá trị nào đã chọn
-        if str(required_val).lower() in selected_values_lower:
-            active_conditional.append(f)
-
-    if active_conditional:
-        logger.info(
-            "attribute_selector pass2: activating %d conditional fields",
-            len(active_conditional),
-        )
-        cond_result = await _process_fields(active_conditional, title, description)
-        result.update(cond_result)
-        logger.info("attribute_selector pass2 added: %s", cond_result)
-
-    logger.info("attribute_selector final: %s", result)
-    return result
+    # Exact evidence is resolved before LLM calls, so child options can identify
+    # their parent without requiring the LLM to guess the parent first.
+    revision = await taxonomy_version()
+    return await cache.get_or_compute(
+        "attributes_quick", [revision, embedder.model_name(),
+            llm_service.cache_identity(llm_service.SYSTEM_EXTRACT_ATTRS, llm_service.SYSTEM_EXTRACT_DIRECT),
+            title, description, attributes, detected_attributes],
+        settings.cache_llm_ttl,
+        lambda: attribute_rules.select_with_dependencies(attributes, title, description, _process_fields),
+        enabled=revision is not None,
+    )
 

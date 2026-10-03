@@ -4,9 +4,12 @@ Classifier – pipeline chính tích hợp tất cả service.
 from __future__ import annotations
 
 import logging
+import asyncio
 from typing import Any, Literal
 
-from services import embedder, llm_service, qdrant_service
+from services import embedder, llm_service, candidate_retrieval
+from config import settings
+from services.result_cache import cache, taxonomy_version
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +58,29 @@ async def classify_product(
     price: float | None = None,
     image_urls: list[str] | None = None,
     fast: bool = False,
+    understanding: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    revision = await taxonomy_version() if not image_urls else None
+    identity = ["hybrid-2", revision, embedder.model_name(),
+                llm_service.cache_identity(llm_service.SYSTEM_UNDERSTAND, llm_service.SYSTEM_RERANK),
+                title, description, price, fast,
+                settings.qdrant_host, settings.qdrant_port, settings.qdrant_collection]
+    return await cache.get_or_compute(
+        "classification", identity, settings.cache_classification_ttl,
+        lambda: _classify_product_uncached(title, description, price, image_urls, fast, understanding),
+        enabled=revision is not None,
+        cacheable=lambda value: bool(value.get("selected_category") and
+                                     (value.get("rerank") or {}).get("category_id")),
+    )
+
+
+async def _classify_product_uncached(
+    title: str,
+    description: str = "",
+    price: float | None = None,
+    image_urls: list[str] | None = None,
+    fast: bool = False,
+    understanding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Full pipeline:
@@ -74,16 +100,16 @@ async def classify_product(
             "confidence": 0.5,
             "text_image_consistency": "text_only",
         }
-        product_vector = await embedder.embed_single(product_embedding_text)
         understand_conf: float = 0.5
     else:
         # Step 1 – Product understanding
-        understanding = await llm_service.understand_product(
-            title=title,
-            description=description,
-            price=price,
-            image_urls=image_urls,
-        )
+        if understanding is None:
+            understanding = await llm_service.understand_product(
+                title=title,
+                description=description,
+                price=price,
+                image_urls=image_urls,
+            )
         understand_conf = understanding.get("confidence", 0.5)
 
         # Step 2 – Build enriched embedding text từ kết quả understanding
@@ -94,12 +120,16 @@ async def classify_product(
             f"Nội dung chuẩn hóa: {normalized_text}"
         ).strip()
 
-        # Step 3 – Embed product_embedding_text (đã có normalized text)
-        product_vector = await embedder.embed_single(product_embedding_text)
-
-    # Step 4 – Vector search
+    # Step 4 – Search categories and options concurrently, preserving evidence.
     top_k = 20 if fast else (30 if understand_conf < 0.75 else 20)
-    candidates = await qdrant_service.search_categories(product_vector, top_k=top_k)
+    option_query = understanding.get("product_type") or understanding.get("suggested_title") or title
+    product_vector, option_vector = await asyncio.gather(
+        embedder.embed_single(product_embedding_text),
+        embedder.embed_single(option_query or product_embedding_text),
+    )
+    candidates = await candidate_retrieval.retrieve_candidates(
+        product_vector, option_vector, title, description, top_k,
+    )
 
     if not candidates:
         return {
@@ -112,12 +142,12 @@ async def classify_product(
             "selected_category": None,
         }
 
-    # Step 5 – LLM rerank với top 20
+    # Step 5 – Rerank every merged candidate, including option-only categories.
     rerank = await llm_service.rerank_categories(
         product_embedding_text=product_embedding_text,
         understanding_confidence=understand_conf,
         text_image_consistency=understanding.get("text_image_consistency", "unknown"),
-        candidates=candidates[:20],
+        candidates=candidates,
     )
 
     # Step 6 – Threshold

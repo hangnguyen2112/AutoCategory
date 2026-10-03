@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from typing import Any
 
 from qdrant_client import AsyncQdrantClient
@@ -18,12 +19,23 @@ from qdrant_client.models import (
 )
 
 from config import settings
+from services.result_cache import invalidate_taxonomy
 
 logger = logging.getLogger(__name__)
 
 _client: AsyncQdrantClient | None = None
 
 VECTOR_SIZE = 768  # Alibaba-NLP/gte-multilingual-base output dim
+
+
+@asynccontextmanager
+async def _index_change():
+    # Both sides matter: a request may finish against a partially replaced index.
+    await invalidate_taxonomy()
+    try:
+        yield
+    finally:
+        await invalidate_taxonomy()
 
 
 def get_client() -> AsyncQdrantClient:
@@ -65,11 +77,12 @@ async def upsert_categories(
         for p, vec in zip(profiles, vectors)
     ]
 
-    await client.upsert(
-        collection_name=settings.qdrant_collection,
-        points=points,
-        wait=True,
-    )
+    async with _index_change():
+        await client.upsert(
+            collection_name=settings.qdrant_collection,
+            points=points,
+            wait=True,
+        )
     logger.info("Upserted %d category vectors", len(points))
     return len(points)
 
@@ -104,7 +117,8 @@ async def search_categories(
 
 async def delete_collection() -> None:
     client = get_client()
-    await client.delete_collection(settings.qdrant_collection)
+    async with _index_change():
+        await client.delete_collection(settings.qdrant_collection)
     logger.info("Deleted collection: %s", settings.qdrant_collection)
 
 
@@ -144,8 +158,9 @@ async def upsert_attribute_options(
         for o, vec in zip(options, vectors)
     ]
     batch_size = 128
-    for i in range(0, len(points), batch_size):
-        await client.upsert(collection_name=ATTR_COLLECTION, points=points[i:i + batch_size], wait=True)
+    async with _index_change():
+        for i in range(0, len(points), batch_size):
+            await client.upsert(collection_name=ATTR_COLLECTION, points=points[i:i + batch_size], wait=True)
     logger.info("Upserted %d attribute option vectors", len(points))
     return len(points)
 
@@ -169,9 +184,32 @@ async def search_attribute_options(
     return [{"score": round(r.score, 4), **r.payload} for r in results]
 
 
+async def search_options_global(query_vector: list[float], top_k: int = 50) -> list[dict]:
+    """Retrieve option evidence before a category or field has been selected."""
+    results = await get_client().search(
+        collection_name=ATTR_COLLECTION, query_vector=query_vector,
+        limit=top_k, with_payload=True,
+    )
+    return [{**r.payload, "score": round(r.score, 4)} for r in results]
+
+
+async def get_category_profiles(category_ids: list[int]) -> list[dict]:
+    """Resolve option candidates against the active leaf category index."""
+    if not category_ids:
+        return []
+    points = await get_client().retrieve(
+        collection_name=settings.qdrant_collection,
+        ids=[str(uuid.uuid5(uuid.NAMESPACE_OID, str(cid))) for cid in category_ids],
+        with_payload=True, with_vectors=False,
+    )
+    return [p.payload for p in points if p.payload
+            and p.payload.get("is_active") and p.payload.get("is_leaf")]
+
+
 async def delete_attr_collection() -> None:
     client = get_client()
-    await client.delete_collection(ATTR_COLLECTION)
+    async with _index_change():
+        await client.delete_collection(ATTR_COLLECTION)
     logger.info("Deleted collection: %s", ATTR_COLLECTION)
 
 

@@ -27,6 +27,21 @@ from config import settings
 router = APIRouter(prefix="/api/admin/system", tags=["Admin - System"])
 
 
+@router.get("/cache/metrics", summary="Cache hits and misses by processing stage")
+def get_cache_metrics(current_admin: CurrentAdminUser):
+    from services.metrics_service import cache_hits_total, cache_misses_total
+    stats = {}
+    for counter, kind in ((cache_hits_total, "hits"), (cache_misses_total, "misses")):
+        for family in counter.collect():
+            for sample in family.samples:
+                if sample.name.endswith("_total"):
+                    stats.setdefault(sample.labels["cache_type"], {"hits": 0, "misses": 0})[kind] = int(sample.value)
+    for row in stats.values():
+        total = row["hits"] + row["misses"]
+        row["hit_rate"] = round(row["hits"] / total, 4) if total else 0.0
+    return {"scope": "worker", "cache": stats}
+
+
 @router.post("/services/{service_name}/control", response_model=ServiceControlResponse)
 def control_service(
     service_name: str,
@@ -96,6 +111,13 @@ def clear_cache(
             else:
                 keys_deleted = 0
         
+        # Invalidate taxonomy-dependent memory entries in every worker too.
+        from database import SessionLocal, bump_taxonomy_revision
+        from services.result_cache import cache
+        with SessionLocal() as db:
+            bump_taxonomy_revision(db)
+            db.commit()
+        cache.clear_local()
         return CacheClearResponse(
             success=True,
             cache_type=request.cache_type,

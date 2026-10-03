@@ -142,23 +142,17 @@ async def generate_from_text(req: GenerateFromTextRequest, db: Session = Depends
     và đề xuất tiêu đề/mô tả được cải thiện (không cần ảnh).
     """
     try:
-        # Gợi ý tiêu đề & mô tả dựa trên text (không cần ảnh)
-        understanding = await understand_product(
+        # Classification already understands the original input. Reuse its
+        # output for suggested copy instead of making the same LLM call twice.
+        category_result = await classifier.classify_product(
             title=req.title,
             description=req.description,
             price=req.price,
-        )
-        suggested_title = understanding.get("suggested_title") or req.title
-        suggested_description = understanding.get("suggested_description") or req.description
-
-        # Phân loại dùng text đã được chuẩn hoá
-        classify_title = understanding.get("normalized_product_text") or suggested_title or req.title
-        category_result = await classifier.classify_product(
-            title=classify_title,
-            description=suggested_description or req.description,
-            price=req.price,
             fast=False,
         )
+        understanding = category_result.get("understanding") or {}
+        suggested_title = understanding.get("suggested_title") or req.title
+        suggested_description = understanding.get("suggested_description") or req.description
 
         selected = category_result.get("selected_category") or {}
         rerank = category_result.get("rerank") or {}
@@ -315,6 +309,7 @@ async def generate_stream(req: GenerateStreamRequest):
         description = req.description.strip()
         category_id: int | None = None
         detected_attributes: dict = {}
+        text_result: dict | None = None
 
         # ── Step 1: Image analysis ────────────────────────────────────────
         if req.image_urls:
@@ -365,14 +360,19 @@ async def generate_stream(req: GenerateStreamRequest):
                 return
 
         # ── Step 2: Classification ────────────────────────────────────────
+        # Suggested copy is for display. Preserve negation and original facts
+        # when text-only requests are classified and their attributes filled.
+        evidence_title = title if req.image_urls else req.title.strip()
+        evidence_description = description if req.image_urls else req.description.strip()
         yield _sse({"step": "classifying", "message": "Đang phân loại danh mục…"})
         try:
             cat_result = await classifier.classify_product(
-                title=title,
-                description=description,
+                title=evidence_title,
+                description=evidence_description,
                 price=req.price,
                 image_urls=req.image_urls if req.image_urls else None,
                 fast=False,
+                understanding=text_result if not req.image_urls else None,
             )
             selected = cat_result.get("selected_category") or {}
             rerank = cat_result.get("rerank") or {}
@@ -404,16 +404,16 @@ async def generate_stream(req: GenerateStreamRequest):
                 if req.full:
                     # AI Đầy đủ: LLM thấy toàn bộ options và chọn trực tiếp
                     selected_values = await suggest_field_values(
-                        title=title,
-                        description=description,
+                        title=evidence_title,
+                        description=evidence_description,
                         fields=attributes,
                     )
                 else:
                     # Phân tích nhanh: Qdrant/hybrid
                     selected_values = await attribute_selector.select_attributes(
                         attributes=attributes,
-                        title=title,
-                        description=description,
+                        title=evidence_title,
+                        description=evidence_description,
                         detected_attributes=detected_attributes,
                     )
                 yield _sse({

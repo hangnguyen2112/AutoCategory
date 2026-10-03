@@ -376,6 +376,8 @@ async def generate_descriptions(
 
     if updates:
         db.bulk_update_mappings(CategoryModel, updates)
+        # Legacy bulk mappings bypass SQLAlchemy's flush/ORM execute hooks.
+        db.info["taxonomy_changed"] = True
         db.commit()
     return {"updated": len(updates), "skipped": skipped, "total": total}
 

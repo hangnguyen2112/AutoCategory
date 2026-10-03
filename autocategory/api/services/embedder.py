@@ -9,14 +9,21 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from functools import partial
+from threading import Lock
 
 import torch
 from sentence_transformers import SentenceTransformer
+from config import settings
+from services.result_cache import cache
 
 logger = logging.getLogger(__name__)
 
 _model: SentenceTransformer | None = None
+_model_lock = Lock()
+
+
+def model_name() -> str:
+    return os.getenv("EMBEDDING_MODEL", "Alibaba-NLP/gte-multilingual-base")
 
 
 def _get_device() -> str:
@@ -35,23 +42,27 @@ def _get_device() -> str:
 def _get_model() -> SentenceTransformer:
     """Load model singleton (lazy initialization)."""
     global _model
-    if _model is None:
-        model_name = os.getenv("EMBEDDING_MODEL", "Alibaba-NLP/gte-multilingual-base")
-        device = _get_device()
-        logger.info(f"Loading embedding model: {model_name} on {device}")
-        _model = SentenceTransformer(model_name, trust_remote_code=True, device=device)
-        logger.info(f"Model loaded successfully. Dimension: {_model.get_sentence_embedding_dimension()}")
+    with _model_lock:
+        if _model is None:
+            name = model_name()
+            device = _get_device()
+            logger.info(f"Loading embedding model: {name} on {device}")
+            _model = SentenceTransformer(name, trust_remote_code=True, device=device)
+            logger.info(f"Model loaded successfully. Dimension: {_model.get_sentence_embedding_dimension()}")
     return _model
 
 
 async def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed một list text, trả về list vector."""
-    model = _get_model()
     loop = asyncio.get_event_loop()
+
+    def encode():
+        model = _get_model()
+        return model.encode(texts, convert_to_numpy=True)
     
     # Run encoding in thread pool to avoid blocking
     embeddings = await loop.run_in_executor(
-        None, partial(model.encode, texts, convert_to_numpy=True)
+        None, encode
     )
     
     # Convert numpy arrays to lists
@@ -65,5 +76,8 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
 
 async def embed_single(text: str) -> list[float]:
     """Embed single text, return vector."""
-    vectors = await embed_texts([text])
-    return vectors[0]
+    async def compute():
+        vectors = await embed_texts([text])
+        return vectors[0]
+    return await cache.get_or_compute("embeddings", [model_name(), text],
+                                      settings.cache_embedding_ttl, compute)

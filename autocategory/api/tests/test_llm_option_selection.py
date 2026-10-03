@@ -71,6 +71,13 @@ async def test_explicit_model_is_selected_beyond_old_300_option_cutoff(monkeypat
         "Xiaomi Redmi Note 14 Pro+ 12GB/256GB",
         "",
         [{
+            "id": 1,
+            "omni_field_id": 1,
+            "field_key": "brand",
+            "field_label": "Hãng",
+            "field_type": "select",
+            "field_options": [_option("Xiaomi")],
+        }, {
             "field_key": "dong_may_Xiaomi",
             "field_label": "Dòng máy Xiaomi",
             "field_type": "select",

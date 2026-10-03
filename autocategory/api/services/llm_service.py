@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-import unicodedata
+from datetime import date
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -12,6 +12,8 @@ import httpx
 
 from config import settings
 from runtime_config import runtime_config
+from services import attribute_rules
+from services.result_cache import cache, taxonomy_version, mark_uncacheable
 
 logger = logging.getLogger(__name__)
 
@@ -56,15 +58,23 @@ def _extract_json(text: str) -> dict | None:
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
     text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL).strip()
     try:
-        return json.loads(text)
+        result = json.loads(text)
+        if isinstance(result, dict):
+            return result
+        mark_uncacheable()
+        return None
     except json.JSONDecodeError:
         pass
     match = re.search(r"\{[\s\S]*\}", text)
     if match:
         try:
-            return json.loads(match.group())
+            result = json.loads(match.group())
+            if isinstance(result, dict):
+                return result
         except json.JSONDecodeError:
             pass
+    mark_uncacheable()
+    return None
     return None
 
 
@@ -161,6 +171,8 @@ Nhiệm vụ:
 - Đọc title, description, price và ảnh nếu có.
 - Hiểu ý người viết (xử lý typo, viết tắt phổ biến).
 - Viết lại thành normalized_product_text rõ nghĩa để tìm danh mục.
+- Tách product_type: tên loại sản phẩm CHÍNH đang rao (ngắn gọn, ví dụ "thẻ nhớ", "máy ảnh"). Không liệt kê phụ kiện đi kèm, không thêm thương hiệu/thông số chưa biết.
+- confidence phản ánh độ chắc chắn về loại sản phẩm; thiếu thương hiệu hoặc dung lượng không đồng nghĩa không biết loại sản phẩm.
 - Tách suggested_title (ngắn gọn, CÓ THỂ GIỮ PHONG CÁCH RAO VẶT nếu phù hợp).
 - Tách suggested_description (tự nhiên, thân thiện, như người bán cá nhân).
 - Dựa vào ảnh để bổ sung thông tin nếu text chưa rõ.
@@ -196,6 +208,7 @@ Viết tắt phổ biến cần hiểu:
 Output JSON format (chỉ JSON, không markdown):
 {
   "normalized_product_text": string,
+  "product_type": string,
   "suggested_title": string,
   "suggested_description": string,
   "confidence": number (0.0-1.0),
@@ -203,7 +216,27 @@ Output JSON format (chỉ JSON, không markdown):
 }"""
 
 
+def cache_identity(*prompts: str) -> list:
+    return [settings.deepseek_proxy_url, runtime_config.deepseek_model, *prompts]
+
+
 async def understand_product(
+    title: str,
+    description: str = "",
+    price: float | None = None,
+    image_urls: list[str] | None = None,
+) -> dict[str, Any]:
+    revision = await taxonomy_version() if not image_urls else None
+    return await cache.get_or_compute(
+        "understanding", [revision, cache_identity(SYSTEM_UNDERSTAND), title, description, price],
+        settings.cache_llm_ttl,
+        lambda: _understand_product_uncached(title, description, price, image_urls),
+        enabled=revision is not None,
+        cacheable=lambda value: bool(value.get("product_type") and value.get("normalized_product_text")),
+    )
+
+
+async def _understand_product_uncached(
     title: str,
     description: str = "",
     price: float | None = None,
@@ -223,6 +256,7 @@ async def understand_product(
     result = _extract_json(raw)
     logger.info("Extracted JSON: %s", result)
     if not result:
+        mark_uncacheable()
         logger.warning("LLM understand_product returned non-JSON: %s", raw[:200])
         return {
             "normalized_product_text": title,
@@ -275,11 +309,12 @@ async def extract_attribute_values(
     if not fields:
         return {}
 
+    aliases = {f"f{i}": f for i, f in enumerate(fields)}
     field_lines = "\n".join(
-        f'- {f["field_key"]}: {f.get("field_label", f["field_key"])}'
-        for f in fields
+        f'- {alias}: {f.get("field_label", f["field_key"])}'
+        for alias, f in aliases.items()
     )
-    user_text = f"Các thuộc tính cần điền:\n{field_lines}\n\nThông tin sản phẩm cần phân tích:\nTiêu đề: {title}\nMô tả: {description}"
+    user_text = f"Các thuộc tính cần điền:\n{field_lines}\nDùng đúng mã f0, f1... làm key JSON.\n\nThông tin sản phẩm cần phân tích:\nTiêu đề: {title}\nMô tả: {description}"
 
     try:
         raw = await _chat(SYSTEM_EXTRACT_ATTRS, user_text, max_tokens=256)
@@ -287,8 +322,12 @@ async def extract_attribute_values(
         if not result:
             logger.warning("extract_attribute_values: non-JSON: %s", raw[:200])
             return {}
-        return {k: str(v) for k, v in result.items() if v is not None and str(v).strip()}
+        allowed = {f["field_key"] for f in fields}
+        return {(aliases[k]["field_key"] if k in aliases else k): str(v)
+                for k, v in result.items() if (k in aliases or k in allowed)
+                and v is not None and str(v).strip()}
     except Exception:
+        mark_uncacheable()
         logger.exception("extract_attribute_values failed")
         return {}
 
@@ -306,19 +345,20 @@ async def extract_attribute_values_direct(
         return {}
 
     lines = []
-    for f in fields:
+    aliases = {f"f{i}": f for i, f in enumerate(fields)}
+    for alias, f in aliases.items():
         opts = f.get("field_options") or []
         if opts:
             opts_str = ", ".join(
                 f'"{o["value"]}"' + (f' ({o["label"]})' if o.get("label") and o["label"] != o["value"] else '')
                 for o in opts
             )
-            lines.append(f'- {f["field_key"]} "{f.get("field_label", "")}": chọn một trong [{opts_str}]')
+            lines.append(f'- {alias} "{f.get("field_label", "")}": chọn một trong [{opts_str}]')
         else:
-            lines.append(f'- {f["field_key"]} "{f.get("field_label", "")}": điền tự do')
+            lines.append(f'- {alias} "{f.get("field_label", "")}": điền tự do')
 
     user_text = (
-        f"Các thuộc tính cần điền:\n" + "\n".join(lines) + "\n\n"
+        f"Các thuộc tính cần điền:\n" + "\n".join(lines) + "\nDùng đúng mã f0, f1... làm key JSON.\n\n"
         f"Thông tin sản phẩm cần phân tích:\nTiêu đề: {title}\nMô tả: {description or '(không có)'}"
     )
     try:
@@ -327,8 +367,12 @@ async def extract_attribute_values_direct(
         if not result:
             logger.warning("extract_attribute_values_direct: non-JSON: %s", raw[:200])
             return {}
-        return {k: str(v) for k, v in result.items() if v is not None and str(v).strip()}
+        allowed = {f["field_key"] for f in fields}
+        return {(aliases[k]["field_key"] if k in aliases else k): str(v)
+                for k, v in result.items() if (k in aliases or k in allowed)
+                and v is not None and str(v).strip()}
     except Exception:
+        mark_uncacheable()
         logger.exception("extract_attribute_values_direct failed")
         return {}
 
@@ -348,6 +392,8 @@ Nhiệm vụ:
 - KHÔNG tự tạo category mới.
 - Ưu tiên danh mục con cụ thể nhất.
 - Hiểu ý người viết qua ngữ cảnh (không cần viết chuẩn).
+- Dùng option khớp và nhánh cha để hiểu phạm vi danh mục. Chọn theo sản phẩm CHÍNH, không chọn theo phụ kiện đi kèm hoặc sản phẩm bị phủ định.
+- Thiếu dung lượng/thương hiệu không làm giảm độ chắc chắn nếu loại sản phẩm và danh mục đã rõ.
 - Nếu không đủ thông tin, trả confidence thấp (< 0.55).
 - Trả về JSON hợp lệ, KHÔNG thêm giải thích ngoài JSON.
 
@@ -370,6 +416,8 @@ async def rerank_categories(
 ) -> dict[str, Any]:
     candidates_text = "\n".join(
         f"- id={c['category_id']} | {c.get('path', c.get('name'))} | {c.get('description', '')}"
+        + (" | Option liên quan: " + json.dumps(c["matched_options"], ensure_ascii=False)
+           if c.get("matched_options") else "")
         for c in candidates
     )
 
@@ -394,7 +442,27 @@ Danh mục ứng viên:
             "reason": "LLM response parse error",
             "alternatives": [],
         }
-    return result
+    allowed_ids = {c["category_id"] for c in candidates}
+    try:
+        selected_id = int(result["category_id"]) if result.get("category_id") is not None else None
+        confidence = min(1.0, max(0.0, float(result.get("confidence", 0))))
+    except (TypeError, ValueError):
+        selected_id, confidence = None, 0.0
+    if selected_id not in allowed_ids:
+        selected_id, confidence = None, 0.0
+    alternatives = []
+    for alternative in result.get("alternatives") or []:
+        if not isinstance(alternative, dict):
+            continue
+        try:
+            aid = int(alternative.get("category_id"))
+            conf = min(1.0, max(0.0, float(alternative.get("confidence", 0))))
+        except (TypeError, ValueError):
+            continue
+        if aid in allowed_ids:
+            alternatives.append({"category_id": aid, "confidence": conf})
+    return {"category_id": selected_id, "confidence": confidence,
+            "reason": result.get("reason", ""), "alternatives": alternatives}
 
 
 # ── Field Value Suggestion ──────────────────────────────────────────────────────
@@ -450,10 +518,7 @@ def _compute_warranty_hint(text: str, today: "datetime") -> str:
 
 def _normalize_option_text(value: Any) -> str:
     """Normalize user text and option labels for deterministic matching."""
-    text = unicodedata.normalize("NFKD", str(value or "")).casefold()
-    text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    text = text.replace("+", " plus ")
-    return " ".join(re.findall(r"[a-z0-9]+", text))
+    return attribute_rules.normalize_text(value)
 
 
 def _option_names(option: dict) -> list[str]:
@@ -488,7 +553,7 @@ def _find_explicit_option_value(field: dict, title: str, description: str) -> st
         if value is None:
             continue
         for name in _option_names(option):
-            if _contains_option_name(normalized_text, name):
+            if attribute_rules.positive_option_mention(f"{title}\n{description}", name):
                 matches.append((len(name.split()), len(name), str(value)))
                 break
     if not matches:
@@ -648,7 +713,7 @@ def _prefilter_conditional_fields(fields: list[dict], title: str, description: s
     return result
 
 
-async def suggest_field_values(
+async def _suggest_field_values_batch(
     title: str,
     description: str,
     fields: list[dict],
@@ -669,10 +734,7 @@ async def suggest_field_values(
     if warranty_hint:
         warranty_note = f"\n\n[KẾT QUẢ TÍNH TOÁN BẢO HÀNH - ĐÃ XÁC NHẬN]: {warranty_hint}\nVới field bảo hành, PHẢI dùng kết quả tính toán trên, không tự suy đoán."
 
-    # Smart-filter: for groups of conditional fields sharing the same parent (e.g. dong_may_apple /
-    # dong_may_dell / dong_may_asus all conditional on brand), detect which one applies from the
-    # product text and drop the rest. This can cut hundreds of irrelevant options from the prompt.
-    fields = _prefilter_conditional_fields(fields, title, description or "")
+    # Dependency filtering is shared by both modes in select_with_dependencies.
 
     # Resolve values explicitly written in product text before involving the LLM.
     all_results: dict[str, str | None] = {}
@@ -694,7 +756,9 @@ async def suggest_field_values(
 
         fields_text_parts = []
         prompt_fields: list[dict] = []
-        for f in batch:
+        aliases: dict[str, dict] = {}
+        for index, f in enumerate(batch):
+            alias = f"f{index}"
             opts = f.get("field_options") or []
             if opts:
                 prompt_options = _options_for_prompt(f, title, description or "")
@@ -708,13 +772,14 @@ async def suggest_field_values(
                     f"'{o.get('value')}' ({o.get('label')})" for o in prompt_options
                 )
                 fields_text_parts.append(
-                    f'- {f["field_key"]} [{f["field_type"]}] "{f["field_label"]}": options=[{opts_str}]'
+                    f'- {alias} [{f["field_type"]}] "{f["field_label"]}": options=[{opts_str}]'
                 )
             else:
                 fields_text_parts.append(
-                    f'- {f["field_key"]} [{f["field_type"]}] "{f["field_label"]}"'
+                    f'- {alias} [{f["field_type"]}] "{f["field_label"]}"'
                 )
             prompt_fields.append(f)
+            aliases[alias] = f
 
         if not prompt_fields:
             continue
@@ -730,7 +795,7 @@ Thông tin sản phẩm cần phân tích:
 Tiêu đề: {title}
 Mô tả: {description or '(không có)'}
 
-Hãy trả về JSON với key là field_key và value là giá trị phù hợp nhất (hoặc null nếu không đủ thông tin)."""
+Hãy trả về JSON với key là mã f0, f1... ở trên và value là giá trị phù hợp nhất (hoặc null nếu không đủ thông tin)."""
 
         try:
             raw = await _chat(SYSTEM_SUGGEST_FIELDS, user_msg)
@@ -738,21 +803,35 @@ Hãy trả về JSON với key là field_key và value là giá trị phù hợp
             if result:
                 fields_by_key = {f["field_key"]: f for f in prompt_fields}
                 for key, value in result.items():
-                    field = fields_by_key.get(key)
+                    field = aliases.get(key) or fields_by_key.get(key)
                     if field is None or value is None or str(value).strip() == "":
                         continue
                     if field.get("field_options"):
                         canonical = _canonical_option_value(field, value)
                         if canonical is not None:
-                            all_results[key] = canonical
+                            all_results[field["field_key"]] = canonical
                     else:
-                        all_results[key] = value
+                        all_results[field["field_key"]] = value
             else:
                 logger.warning("suggest_field_values batch %d returned non-JSON: %s", batch_start, raw[:200])
         except Exception as exc:
+            mark_uncacheable()
             logger.warning("suggest_field_values batch %d failed: %s", batch_start, exc)
 
     return all_results
+
+
+async def suggest_field_values(title: str, description: str, fields: list[dict]) -> dict:
+    async def process(pending: list[dict], product_title: str, product_description: str) -> dict:
+        return await _suggest_field_values_batch(product_title, product_description, pending)
+    revision = await taxonomy_version()
+    return await cache.get_or_compute(
+        "attributes_full", [revision, cache_identity(SYSTEM_SUGGEST_FIELDS), date.today().isoformat(),
+                            title, description or "", fields],
+        settings.cache_llm_ttl,
+        lambda: attribute_rules.select_with_dependencies(fields, title, description or "", process),
+        enabled=revision is not None,
+    )
 
 
 # ── Category Description Generation ──────────────────────────────────────────

@@ -9,6 +9,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from contextlib import contextmanager
 import os
+import uuid
 from config import settings
 
 # Get database URL from environment or config
@@ -74,6 +75,44 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Base class for models
 Base = declarative_base()
+
+
+def bump_taxonomy_revision(db):
+    """Publish a new cache revision in the same transaction as taxonomy writes."""
+    from sqlalchemy import text
+    db.connection().execute(text("""
+        INSERT INTO system_config (key, value, value_type, category, is_active)
+        VALUES ('cache.taxonomy_version', :version, 'string', 'cache', true)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value,
+            updated_at = CURRENT_TIMESTAMP
+    """), {"version": uuid.uuid4().hex})
+
+
+@event.listens_for(SessionLocal.class_, "before_flush")
+def _mark_taxonomy_writes(db, flush_context, instances):
+    if any(getattr(obj, "__tablename__", None) in {"categories", "category_fields"}
+           for obj in list(db.new) + list(db.dirty) + list(db.deleted)):
+        db.info["taxonomy_changed"] = True
+
+
+@event.listens_for(SessionLocal.class_, "do_orm_execute")
+def _mark_bulk_taxonomy_writes(state):
+    if state.is_insert or state.is_update or state.is_delete:
+        table = getattr(state.statement, "table", None)
+        if getattr(table, "name", None) in {"categories", "category_fields"}:
+            state.session.info["taxonomy_changed"] = True
+
+
+@event.listens_for(SessionLocal.class_, "before_commit")
+def _publish_taxonomy_revision(db):
+    db.flush()
+    if db.info.pop("taxonomy_changed", False):
+        bump_taxonomy_revision(db)
+
+
+@event.listens_for(SessionLocal.class_, "after_rollback")
+def _discard_taxonomy_revision(db):
+    db.info.pop("taxonomy_changed", None)
 
 
 def get_db():

@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from runtime_config import runtime_config
+from services.result_cache import cache
 from routers import (
     admin, category, classify, auth, generate,
     admin_logs, admin_training, admin_config, admin_categories, admin_system, admin_llm
@@ -50,11 +51,13 @@ async def lifespan(app: FastAPI):
         await redis_client.ping()
         logger.info("Connected to Redis successfully")
         app.state.redis_client = redis_client
+        cache.redis = redis_client
     except Exception as e:
         if redis_client is not None:
             await redis_client.aclose()
         logger.warning(f"Redis connection failed, rate limiting will be disabled: {e}")
         app.state.redis_client = None
+        cache.redis = None
     
     # Load runtime config from DB (LLM provider, model, thinking, ...)
     db = None
@@ -91,6 +94,8 @@ async def lifespan(app: FastAPI):
     # Cleanup on shutdown
     from services.llm_service import close_llm_clients
     await close_llm_clients()
+    cache.redis = None
+    cache.clear_local()
     if hasattr(app.state, "redis_client") and app.state.redis_client:
         await app.state.redis_client.aclose()
 

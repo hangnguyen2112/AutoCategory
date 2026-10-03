@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     
     # Redis
     redis_url: str = "redis://redis:6379/0"
+    cache_enabled: bool = True
+    cache_embedding_ttl: int = 86400
+    cache_llm_ttl: int = 3600
+    cache_classification_ttl: int = 600
+    cache_catalog_ttl: int = 3600
+    cache_memory_entries: int = 512
+    cache_memory_bytes: int = 16777216
     
     # JWT Authentication
     secret_key: str = "your-secret-key-change-in-production"

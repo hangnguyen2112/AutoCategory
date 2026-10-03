@@ -8,6 +8,19 @@ from httpx import AsyncClient
 from main import app
 
 
+@pytest.fixture(autouse=True)
+def isolate_result_cache(monkeypatch):
+    """Unit tests never inherit previous results or use a deployed Redis cache.
+
+    Cache-specific tests explicitly enable caching with controlled revisions.
+    """
+    from config import settings
+    from services.result_cache import cache
+    cache.clear_local()
+    monkeypatch.setattr(settings, "cache_enabled", False)
+    monkeypatch.setattr(cache, "redis", None)
+
+
 @pytest.fixture(scope="session")
 def event_loop():
     """Create event loop for async tests"""
